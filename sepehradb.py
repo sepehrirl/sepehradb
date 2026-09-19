@@ -379,7 +379,7 @@ class Hub(QMainWindow):
             "🛡️  حریم رابط کاربری", "",
             "شناسه‌های فنی، fingerprint، serial و خروجی خام سیستم در این صفحه نمایش داده نمی‌شوند."
         ]
-        self.info.setPlainText("\n".join(info))
+        self.info.setHtml(self.simple_html("\n".join(info)))
         self.animate_widget(self.info)
 
         cpu = re.search(r"(\d+(?:\.\d+)?)%\s+", d["cpu"])
@@ -397,7 +397,7 @@ class Hub(QMainWindow):
             "",
             "✨ فقط اطلاعات لازم برای فهم وضعیت گوشی نمایش داده می‌شود."
         ]
-        self.monitor.setPlainText("\n".join(monitor))
+        self.monitor.setHtml(self.simple_html("\n".join(monitor)))
         self.animate_widget(self.monitor)
 
 
@@ -410,10 +410,40 @@ class Hub(QMainWindow):
         self.runner.done.connect(lambda raw, a=args: self.display(self.friendly_output(a, raw)))
         self.runner.start()
 
+    def simple_html(self, text):
+        rows = [x.strip() for x in str(text).splitlines() if x.strip()]
+        html = [
+            "<html><body style='background:#071018;color:#eef7f4;font-family:Vazirmatn,Segoe UI;font-size:14px;'>"
+        ]
+        for i, row in enumerate(rows):
+            safe = self.html_escape(row)
+            if row.startswith(("📱","🔋","🧠","⚡","🌡","📡","🌐","📺","🗂","👀","📦","🧩","🩺","📝","🔄","✨")):
+                html.append(
+                    f"<div style='background:#0d1822;border:1px solid #1c3342;border-radius:18px;"
+                    f"padding:16px;margin:8px 2px;font-weight:800;font-size:16px;'>{safe}</div>"
+                )
+            elif ":" in row and len(row) < 100:
+                html.append(
+                    f"<div style='background:#11212d;border:1px solid #1c3342;border-radius:14px;"
+                    f"padding:12px;margin:6px 2px;'><span style='color:#89a0ad;'>{safe.split(':',1)[0]}:</span>"
+                    f"<span style='font-weight:800;'> {self.html_escape(row.split(':',1)[1].strip())}</span></div>"
+                )
+            else:
+                html.append(
+                    f"<div style='background:#0d1822;border:1px solid #1c3342;border-radius:14px;"
+                    f"padding:11px 13px;margin:6px 2px;color:#b9c9d0;'>{safe}</div>"
+                )
+        html.append("</body></html>")
+        return "".join(html)
+
+    def html_escape(self, value):
+        return str(value).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
     def display(self, text):
-        self.out.setPlainText(text)
+        self.out.setHtml(self.simple_html(text))
         self.show_page("Console")
         self.animate_widget(self.out)
+
 
 
     def animate_widget(self, widget, duration=220):
@@ -578,7 +608,7 @@ class Hub(QMainWindow):
         lines += [f"• {n}" for n in dict.fromkeys(names)]
         if not names:
             lines.append("موردی مطابق جست‌وجو پیدا نشد.")
-        self.apps_out.setPlainText("\n".join(lines))
+        self.apps_out.setHtml(self.simple_html("\n".join(lines)))
 
     def screenshot(self):
         if not self.serial: return
