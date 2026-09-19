@@ -128,7 +128,7 @@ class Hub(QMainWindow):
     def target(self):
         return ["-s", self.serial] if self.serial else []
 
-    def adb(self, args, timeout=15):
+    def device_cmd(self, args, timeout=15):
         return run_process(self.adb, self.target() + args, timeout)
 
     def build(self):
@@ -408,7 +408,7 @@ class Hub(QMainWindow):
         self.run(text.split(), 30)
 
     def load_apps(self):
-        text = self.adb(["shell","pm","list","packages"], 25)
+        text = self.device_cmd(["shell","pm","list","packages"], 25)
         needle = self.app_filter.text().strip().lower()
         lines = [x for x in text.splitlines() if not needle or needle in x.lower()]
         self.apps_out.setPlainText("\n".join(lines) if lines else "موردی پیدا نشد.")
