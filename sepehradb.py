@@ -1,10 +1,10 @@
 import os, re, sys, shutil, subprocess, threading
-from PySide6.QtCore import Qt, QTimer, QThread, Signal
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QIcon, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QStackedWidget, QTextEdit, QGridLayout, QMessageBox,
-    QFileDialog, QScrollArea, QComboBox, QLineEdit, QProgressBar
+    QFileDialog, QScrollArea, QComboBox, QLineEdit, QProgressBar, QGraphicsOpacityEffect, QCheckBox
 )
 from PySide6.QtSvgWidgets import QSvgWidget
 
@@ -14,7 +14,8 @@ BG="#071018"; SURFACE="#0d1822"; SURFACE2="#11212d"; BORDER="#1c3342"
 TEXT="#eef7f4"; MUTED="#89a0ad"; GREEN="#39e6a5"; RED="#ff6876"; BLUE="#67b7ff"; GOLD="#ffcf66"
 
 def resource_path(relative):
-    return os.path.join(ROOT, relative)
+    base = getattr(sys, "_MEIPASS", ROOT)
+    return os.path.join(base, relative)
 
 def adb_path():
     local = resource_path(os.path.join("platform-tools", "adb.exe"))
@@ -113,6 +114,9 @@ class Hub(QMainWindow):
         self.runner = None
         self.snapshot_runner = None
         self.refreshing = False
+        self._page_effects = {}
+        self._page_anims = {}
+        self.simple_mode = True
         self.setWindowTitle(APP_NAME)
         self.resize(1380, 860)
         self.setMinimumSize(1120, 720)
@@ -166,7 +170,7 @@ class Hub(QMainWindow):
         sl.addStretch()
 
         self.conn = QLabel("●  در حال بررسی ADB"); self.conn.setObjectName("connection"); sl.addWidget(self.conn)
-        ver = QLabel("ویندوز • نسخه 2.0"); ver.setObjectName("muted"); sl.addWidget(ver)
+        ver = QLabel("ویندوز • نسخه 2.1 UI"); ver.setObjectName("muted"); sl.addWidget(ver)
         main.addWidget(side); main.addWidget(self.nav, 1)
 
         self.add_page("Dashboard", self.dashboard_page())
@@ -182,7 +186,21 @@ class Hub(QMainWindow):
         self.pages[key] = widget; self.nav.addWidget(widget)
 
     def show_page(self, key):
-        self.nav.setCurrentWidget(self.pages[key])
+        page = self.pages[key]
+        self.nav.setCurrentWidget(page)
+        effect = self._page_effects.get(key)
+        if effect is None:
+            effect = QGraphicsOpacityEffect(page)
+            page.setGraphicsEffect(effect)
+            self._page_effects[key] = effect
+        effect.setOpacity(0.0)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(260)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._page_anims[key] = anim
+        anim.start()
 
     def header(self, title, desc):
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(4,4,4,12)
@@ -248,9 +266,9 @@ class Hub(QMainWindow):
             ("📦 برنامه‌های نصب‌شده", ["shell","pm","list","packages"]),
             ("🧩 برنامه‌های کاربر", ["shell","pm","list","packages","-3"]),
             ("📊 UI Automator", ["shell","uiautomator","dump","/sdcard/window.xml"]),
-            ("🧬 Getprop", ["shell","getprop"]),
-            ("🕵 Dumpsys", ["shell","dumpsys"]),
-            ("📝 Logcat", ["logcat","-d"]),
+            ("🧬 مشخصات داخلی اندروید", ["shell","getprop"]),
+            ("🕵 گزارش کامل سیستم", ["shell","dumpsys"]),
+            ("📝 گزارش خطاها و رویدادها", ["logcat","-d"]),
             ("🔄 راه‌اندازی مجدد", ["reboot"]),
             ("👆 رویدادهای لمس", ["shell","getevent","-lt"]),
             ("💻 ترمینال ADB", ["shell"]),
@@ -294,7 +312,12 @@ class Hub(QMainWindow):
         self.cmd_box = QLineEdit(); self.cmd_box.setPlaceholderText("مثلاً: shell dumpsys battery")
         go = QPushButton("▶ اجرای دستور"); go.setObjectName("action"); go.clicked.connect(self.custom_command)
         clear = QPushButton("پاک کردن"); clear.clicked.connect(self.out.clear)
-        row.addWidget(self.cmd_box); row.addWidget(go); row.addWidget(clear); l.addLayout(row)
+        self.mode_label = QLabel("🟢 حالت ساده فعال"); self.mode_label.setObjectName("mode")
+        simple = QCheckBox("توضیح ساده"); simple.setChecked(True); simple.setObjectName("simple")
+        simple.toggled.connect(self.toggle_simple_mode)
+        row.addWidget(self.cmd_box); row.addWidget(go); row.addWidget(clear); row.addWidget(simple); row.addWidget(self.mode_label); l.addLayout(row)
+        hint = QLabel("💡 حالت ساده روشن است؛ برنامه قبل از نتیجه فنی توضیح می‌دهد این دستور چه کاری انجام می‌دهد.")
+        hint.setObjectName("hint"); l.addWidget(hint)
         return w
 
     def refresh_devices(self):
@@ -381,13 +404,66 @@ class Hub(QMainWindow):
         if not self.serial:
             QMessageBox.warning(self, "ADB", "ابتدا یک دستگاه متصل انتخاب کن.")
             return
-        self.runner = CommandRunner(self.adb, self.target() + args, timeout)
-        self.runner.done.connect(self.display)
+        command_args = self.target() + args
+        self.runner = CommandRunner(self.adb, command_args, timeout)
+        self.runner.done.connect(lambda raw, a=args: self.display(self.friendly_output(a, raw)))
         self.runner.start()
 
     def display(self, text):
         self.out.setPlainText(text)
         self.show_page("Console")
+        self.animate_widget(self.out)
+
+
+    def animate_widget(self, widget, duration=220):
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+        anim = QPropertyAnimation(effect, b"opacity", self)
+        anim.setDuration(duration)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        widget._sepehr_anim = anim
+        widget._sepehr_effect = effect
+        anim.start()
+
+    def explain_command(self, args):
+        key = " ".join(args)
+        explanations = {
+            "shell getprop": ("مشخصات سیستم", "اطلاعاتی مثل مدل، نسخه اندروید، سازنده و تنظیمات داخلی را می‌خواند."),
+            "shell dumpsys cpuinfo": ("مصرف پردازنده", "وضعیت مصرف CPU و برنامه‌های پرمصرف را بررسی می‌کند."),
+            "shell dumpsys meminfo": ("حافظه RAM", "نحوه مصرف RAM توسط سیستم و برنامه‌ها را بررسی می‌کند."),
+            "shell dumpsys thermalservice": ("دمای دستگاه", "وضعیت حسگرهای حرارتی گوشی را بررسی می‌کند."),
+            "shell dumpsys battery": ("باتری", "درصد شارژ، دما، ولتاژ و وضعیت باتری را نشان می‌دهد."),
+            "shell dumpsys wifi": ("Wi‑Fi", "وضعیت اتصال و اطلاعات شبکه بی‌سیم را بررسی می‌کند."),
+            "shell dumpsys display": ("نمایشگر", "اطلاعات صفحه و تنظیمات نمایشگر را بررسی می‌کند."),
+            "shell df -h": ("فضای ذخیره‌سازی", "فضای استفاده‌شده و خالی حافظه را نشان می‌دهد."),
+            "shell dumpsys activity top": ("برنامه فعال", "مشخص می‌کند الان کدام برنامه روی صفحه باز است."),
+            "shell pm list packages": ("فهرست برنامه‌ها", "نام فنی برنامه‌های نصب‌شده را نمایش می‌دهد."),
+            "shell pm list packages -3": ("برنامه‌های کاربر", "برنامه‌هایی را که معمولاً توسط کاربر نصب شده‌اند نشان می‌دهد."),
+            "shell uiautomator dump /sdcard/window.xml": ("ساختار صفحه", "عناصر صفحه فعلی اندروید را برای عیب‌یابی بررسی می‌کند."),
+            "shell dumpsys": ("گزارش کامل سیستم", "گزارش گسترده‌ای از سرویس‌های داخلی اندروید می‌گیرد."),
+            "logcat -d": ("گزارش رویدادها", "گزارش‌های ثبت‌شده اندروید و برنامه‌ها را برای عیب‌یابی نمایش می‌دهد."),
+            "reboot": ("راه‌اندازی مجدد", "دستگاه انتخاب‌شده را دوباره راه‌اندازی می‌کند.")
+        }
+        return explanations.get(key, ("دستور ADB", "این دستور مستقیماً برای بررسی یا کنترل دستگاه انتخاب‌شده اجرا می‌شود."))
+
+    def friendly_output(self, args, raw):
+        title, desc = self.explain_command(args)
+        if not self.simple_mode:
+            return raw
+        return (
+            f"🟢 {title}\n"
+            f"💡 {desc}\n"
+            f"📱 دستگاه: {self.serial or 'انتخاب نشده'}\n"
+            f"{'─' * 58}\n\n"
+            f"نتیجه فنی:\n{raw}"
+        )
+
+    def toggle_simple_mode(self, checked):
+        self.simple_mode = checked
+        self.mode_label.setText("🟢 حالت ساده فعال" if checked else "🔧 حالت فنی فعال")
 
     def tool_action(self, args):
         if args == ["shell"]:
@@ -457,7 +533,10 @@ QMainWindow{{background:{BG};}}
 QFrame#sidebar{{background:{SURFACE};border:1px solid {BORDER};border-radius:20px;}}
 QLabel#brand{{font-size:18pt;font-weight:900;}}
 QLabel#title{{font-size:24pt;font-weight:900;}}
-QLabel#muted{{color:{MUTED};}}
+QLabel{{background:transparent;border:0;}}
+QLabel#muted{{color:{MUTED};background:transparent;border:0;}}
+QLabel#hint{{color:{MUTED};background:transparent;border:0;padding:6px 2px;}}
+QLabel#mode{{color:{GREEN};background:transparent;border:0;font-weight:800;padding:4px;}}
 QLabel#connection{{color:{GREEN};font-weight:800;padding:8px 0;}}
 QLabel#status{{background:{SURFACE};border:1px solid {BORDER};border-radius:12px;padding:12px;margin-top:8px;}}
 QFrame#card{{background:{SURFACE};border:1px solid {BORDER};border-radius:17px;}}
@@ -465,13 +544,16 @@ QLabel#value{{font-size:15pt;font-weight:900;}}
 QComboBox#device{{background:{SURFACE2};border:1px solid {BORDER};border-radius:11px;padding:9px;}}
 QPushButton{{border:0;border-radius:11px;padding:11px 14px;background:{SURFACE2};color:{TEXT};}}
 QPushButton:hover{{background:#183142;}}
-QPushButton#nav{{text-align:right;padding:13px 14px;background:transparent;color:{MUTED};font-weight:700;}}
+QPushButton#nav{{text-align:right;padding:13px 14px;background:transparent;color:{MUTED};font-weight:700;border:1px solid transparent;border-radius:13px;}}
 QPushButton#nav:hover{{background:{SURFACE2};color:{TEXT};}}
 QPushButton#action{{background:{GREEN};color:#03140d;font-weight:900;}}
-QPushButton#tool{{min-height:62px;text-align:right;background:{SURFACE};border:1px solid {BORDER};font-weight:700;}}
+QPushButton#tool{{min-height:62px;text-align:right;background:{SURFACE};border:1px solid {BORDER};font-weight:700;border-radius:15px;padding:12px 15px;}}
 QPushButton#tool:hover{{border:1px solid {GREEN};background:{SURFACE2};}}
 QLineEdit{{background:{SURFACE};border:1px solid {BORDER};border-radius:11px;padding:11px;color:{TEXT};}}
-QTextEdit#console{{background:#050b10;border:1px solid {BORDER};border-radius:14px;padding:12px;color:#b8f5dc;font-family:Consolas,'Vazirmatn';font-size:10pt;}}
+QTextEdit#console{{background:#050b10;border:1px solid {BORDER};border-radius:16px;padding:14px;color:#b8f5dc;font-family:Consolas,'Vazirmatn';font-size:10pt;selection-background-color:#174b3d;}}
+QCheckBox#simple{{background:transparent;border:0;color:{MUTED};padding:4px;}}
+QCheckBox#simple::indicator{{width:18px;height:18px;border-radius:9px;border:1px solid {BORDER};background:{SURFACE2};}}
+QCheckBox#simple::indicator:checked{{background:{GREEN};border:1px solid {GREEN};}}
 QScrollArea{{border:0;background:transparent;}}
 """
 
