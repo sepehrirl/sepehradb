@@ -484,10 +484,37 @@ class Hub(QMainWindow):
         self.run(text.split(), 30)
 
     def load_apps(self):
+        if not self.serial:
+            self.apps_out.setPlainText("ابتدا یک دستگاه متصل انتخاب کن.")
+            return
         text = self.device_cmd(["shell","pm","list","packages"], 25)
+        packages = [x.split(":",1)[1].strip() for x in text.splitlines() if x.startswith("package:")]
+        known = {
+            "com.android.settings":"تنظیمات",
+            "com.android.chrome":"Google Chrome",
+            "com.google.android.youtube":"YouTube",
+            "com.instagram.android":"Instagram",
+            "com.google.android.gm":"Gmail",
+            "com.google.android.apps.maps":"Google Maps",
+            "com.android.camera":"دوربین",
+            "com.samsung.android.app.contacts":"مخاطبین",
+            "com.samsung.android.dialer":"تلفن",
+            "com.samsung.android.messaging":"پیام‌ها",
+            "com.sec.android.app.launcher":"صفحه اصلی",
+            "com.android.calculator2":"ماشین‌حساب",
+            "com.google.android.apps.photos":"Google Photos",
+        }
         needle = self.app_filter.text().strip().lower()
-        lines = [x for x in text.splitlines() if not needle or needle in x.lower()]
-        self.apps_out.setPlainText("\n".join(lines) if lines else "موردی پیدا نشد.")
+        names = [known[p] for p in packages if p in known]
+        if needle:
+            names = [n for n in names if needle in n.lower()]
+        if not names:
+            names = ["برنامه نصب‌شده"] if not needle and packages else []
+        lines = ["📦 برنامه‌ها", "", f"تعداد برنامه‌های شناسایی‌شده: {len(packages)}", ""]
+        lines += [f"• {n}" for n in dict.fromkeys(names)]
+        if not names:
+            lines.append("موردی مطابق جست‌وجو پیدا نشد.")
+        self.apps_out.setPlainText("\n".join(lines))
 
     def screenshot(self):
         if not self.serial: return
