@@ -22,7 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller pillow cairosvg
+          python -m pip install pyinstaller pillow
 
       - name: دریافت فونت Vazirmatn
         shell: pwsh
@@ -41,8 +41,7 @@ jobs:
       - name: ساخت آیکون ویندوز از لوگوی SEPEHR ADB HUB
         shell: pwsh
         run: |
-          python -c "import cairosvg; cairosvg.svg2png(url='assets/sepehradb.svg',write_to='icon.png',output_width=512,output_height=512)"
-          python -c "from PIL import Image; Image.open('icon.png').convert('RGBA').save('SEPEHR-ADB-HUB.ico',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+          python -c "from PIL import Image,ImageDraw; im=Image.new('RGBA',(512,512),(7,16,24,255)); d=ImageDraw.Draw(im); d.rounded_rectangle((40,40,472,472),radius=90,outline=(57,230,165,255),width=28); d.ellipse((130,180,382,332),outline=(103,183,255,255),width=24); d.ellipse((225,225,287,287),fill=(57,230,165,255)); im.save('SEPEHR-ADB-HUB.ico',format='ICO',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
 
       - name: ساخت EXE
         shell: pwsh
