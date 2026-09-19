@@ -1,20 +1,31 @@
-# SEPEHR ADB HUB
+# SEPEHR ADB HUB 🚀
 
-A Windows desktop ADB control and monitoring hub for Android devices.
+A modern Windows desktop command center for ADB-powered Android diagnostics and control.
+
+## UI
+- Dark, modern desktop interface
+- Sidebar navigation
+- Live device telemetry
+- Diagnostic tools and console
+- SVG brand/logo built into the repository
 
 ## Features
-- Live device dashboard: model, Android, battery, temperature, RAM and CPU
-- CPU/RAM, thermal, Wi-Fi, current Activity, packages, getprop and dumpsys
+- Device / Android / battery / temperature / RAM / CPU overview
+- Live monitor
+- Wi-Fi, thermal, packages, getprop, dumpsys and current Activity
 - Screenshot and high-quality screen recording
 - scrcpy launcher
-- UI Automator dump
-- Safe reboot control
-- Console-style diagnostic output
+- UI Automator
+- Touch event monitor
+- ADB shell and reboot controls
+
+## Build
+GitHub Actions builds a Windows executable with PyInstaller. PyInstaller supports one-file and windowed Windows executables. See the official documentation: https://pyinstaller.org/en/stable/usage.html
 
 ## Requirements
 - Windows 10/11
-- USB debugging enabled on the Android device
-- Android platform-tools / ADB available in PATH (the release bundle includes ADB)
-- scrcpy is optional and can be installed separately
+- USB debugging enabled
+- Android platform-tools / ADB
+- scrcpy is optional
 
-The app is intended for devices you own or are authorized to administer.
+Use only with devices you own or are authorized to administer.
