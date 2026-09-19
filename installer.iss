@@ -15,10 +15,6 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 
-[Languages]
-Name: "persian"; MessagesFile: "compiler:Languages\Persian.isl"
-Name: "english"; MessagesFile: "compiler:Default.isl"
-
 [Tasks]
 Name: "desktopicon"; Description: "ساخت میانبر روی دسکتاپ"; GroupDescription: "میانبرها:"; Flags: unchecked
 
