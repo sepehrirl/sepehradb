@@ -69,7 +69,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force installer | Out-Null
-          & "$" + "{env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss
 
       - name: بسته ZIP پشتیبان
         shell: pwsh
