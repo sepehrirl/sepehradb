@@ -11,28 +11,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install PyInstaller
+      - name: Install dependencies
         shell: pwsh
-        run: python -m pip install --upgrade pip pyinstaller
-
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
       - name: Download Android platform-tools
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile platform-tools.zip
           Expand-Archive platform-tools.zip -DestinationPath .
           Remove-Item platform-tools.zip
-
-      - name: Build executable
+      - name: Build Windows app
         shell: pwsh
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name SEPEHR-ADB-HUB sepehradb.py
-
-      - name: Package release
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SEPEHR-ADB-HUB sepehradb.py
+      - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
@@ -40,9 +38,9 @@ jobs:
           Copy-Item platform-tools/adb.exe release/
           Copy-Item platform-tools/AdbWinApi.dll release/
           Copy-Item platform-tools/AdbWinUsbApi.dll release/
+          Copy-Item assets/sepehradb.svg release/
           Copy-Item README.md release/
           Compress-Archive -Path release/* -DestinationPath SEPEHR-ADB-HUB-Windows.zip -Force
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
