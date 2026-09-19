@@ -252,14 +252,14 @@ class Hub(QMainWindow):
 
     def tools_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("ابزارها", "ابزارهای تشخیصی و کنترلی ADB برای دستگاهی که خودت مدیریت می‌کنی"))
+        l.addWidget(self.header("ابزارها", "ابزارهای کاربردی؛ نتیجه‌ها ساده و بدون کد و لاگ خام نمایش داده می‌شوند."))
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        box = QWidget(); g = QGridLayout(box); g.setSpacing(10)
+        box = QWidget(); g = QGridLayout(box); g.setSpacing(12)
         actions = [
-            ("📱 مشخصات کامل", ["shell","getprop"]),
-            ("⚡ مصرف CPU", ["shell","dumpsys","cpuinfo"]),
+            ("📱 سلامت گوشی", ["shell","getprop"]),
+            ("⚡ پردازنده", ["shell","dumpsys","cpuinfo"]),
             ("🧠 حافظه RAM", ["shell","dumpsys","meminfo"]),
-            ("🌡 حرارت", ["shell","dumpsys","thermalservice"]),
+            ("🌡 دما", ["shell","dumpsys","thermalservice"]),
             ("🔋 باتری", ["shell","dumpsys","battery"]),
             ("📡 Wi‑Fi", ["shell","dumpsys","wifi"]),
             ("📺 نمایشگر", ["shell","dumpsys","display"]),
@@ -267,19 +267,16 @@ class Hub(QMainWindow):
             ("👀 برنامه فعال", ["shell","dumpsys","activity","top"]),
             ("📦 برنامه‌های نصب‌شده", ["shell","pm","list","packages"]),
             ("🧩 برنامه‌های کاربر", ["shell","pm","list","packages","-3"]),
-            ("📊 UI Automator", ["shell","uiautomator","dump","/sdcard/window.xml"]),
-            ("🧬 مشخصات داخلی اندروید", ["shell","getprop"]),
-            ("🕵 گزارش کامل سیستم", ["shell","dumpsys"]),
-            ("📝 گزارش خطاها و رویدادها", ["logcat","-d"]),
+            ("🩺 سلامت کلی سیستم", ["shell","dumpsys"]),
+            ("📝 بررسی رویدادها", ["logcat","-d"]),
             ("🔄 راه‌اندازی مجدد", ["reboot"]),
-            ("👆 رویدادهای لمس", ["shell","getevent","-lt"]),
-            ("💻 ترمینال ADB", ["shell"]),
         ]
         for i,(label,args) in enumerate(actions):
             b = QPushButton(label); b.setObjectName("tool")
             b.clicked.connect(lambda _, a=args: self.tool_action(a))
             g.addWidget(b, i//3, i%3)
         scroll.setWidget(box); l.addWidget(scroll); return w
+
 
     def network_page(self):
         w = QWidget(); l = QVBoxLayout(w)
@@ -454,16 +451,80 @@ class Hub(QMainWindow):
         return explanations.get(key, ("دستور ADB", "این دستور مستقیماً برای بررسی یا کنترل دستگاه انتخاب‌شده اجرا می‌شود."))
 
     def friendly_output(self, args, raw):
-        title, desc = self.explain_command(args)
-        if not self.simple_mode:
-            return raw
-        return (
-            f"🟢 {title}\n"
-            f"💡 {desc}\n"
-            f"📱 دستگاه: {self.serial or 'انتخاب نشده'}\n"
-            f"{'─' * 58}\n\n"
-            f"نتیجه فنی:\n{raw}"
-        )
+        key = " ".join(args)
+        if key == "shell dumpsys battery":
+            level = re.search(r"level:\s*(\d+)", raw)
+            temp = re.search(r"temperature:\s*(\d+)", raw)
+            voltage = re.search(r"voltage:\s*(\d+)", raw)
+            return "\n".join([
+                "🔋 وضعیت باتری", "",
+                f"شارژ فعلی: {(level.group(1)+'%') if level else 'نامشخص'}",
+                f"دمای باتری: {(f'{int(temp.group(1))/10:.1f} °C') if temp else 'نامشخص'}",
+                f"ولتاژ: {(f'{int(voltage.group(1))/1000:.3f} V') if voltage else 'نامشخص'}",
+                "", "✨ اطلاعات فنی باتری نمایش داده نمی‌شود."
+            ])
+        if key == "shell dumpsys meminfo":
+            total = re.search(r"Total RAM:\s*([0-9,]+)K", raw)
+            return "\n".join([
+                "🧠 وضعیت حافظه", "",
+                f"RAM کل: {(int(total.group(1).replace(',',''))/1024):.0f} MB" if total else "RAM کل: نامشخص",
+                "", "✨ جزئیات فنی حافظه پنهان شده‌اند."
+            ])
+        if key == "shell dumpsys cpuinfo":
+            m = re.search(r"(\d+(?:\.\d+)?)%", raw)
+            return f"⚡ وضعیت پردازنده\n\nفعالیت فعلی: {m.group(1)+'%' if m else 'در حال پایش'}\n\n✨ نام پردازش‌های فنی نمایش داده نمی‌شود."
+        if key == "shell dumpsys thermalservice":
+            hot = re.search(r"(CRITICAL|SEVERE|HOT)", raw, re.I)
+            return f"🌡 وضعیت دما\n\nوضعیت کلی: {'نیاز به توجه' if hot else 'عادی'}\n\n✨ جزئیات حسگرها پنهان شده‌اند."
+        if key == "shell dumpsys wifi":
+            connected = bool(re.search(r"(CONNECTED|COMPLETED)", raw, re.I))
+            return f"📡 وضعیت Wi‑Fi\n\nاتصال: {'متصل' if connected else 'وضعیت اتصال مشخص نیست'}\n\n✨ اطلاعات فنی شبکه نمایش داده نمی‌شود."
+        if key in ("shell ip addr","shell ip route","shell dumpsys connectivity"):
+            return "🌐 وضعیت شبکه\n\nاتصال شبکه بررسی شد.\n\n✨ IP، route و شناسه‌های فنی نمایش داده نمی‌شوند."
+        if key == "shell dumpsys activity top":
+            return f"👀 برنامه فعال\n\n{self.active_app_name(raw)}\n\n✨ نام فنی برنامه نمایش داده نمی‌شود."
+        if key.startswith("shell pm list packages"):
+            count = len([x for x in raw.splitlines() if x.startswith("package:")])
+            return f"📦 برنامه‌ها\n\nتعداد برنامه‌های شناسایی‌شده: {count}\n\nبرای دیدن نام برنامه‌ها وارد بخش «برنامه‌ها» شو."
+        if key == "shell df -h":
+            return "🗂 فضای ذخیره‌سازی\n\nفضای حافظه بررسی شد.\n\n✨ جدول فنی حافظه نمایش داده نمی‌شود."
+        if key == "shell dumpsys display":
+            return "📺 نمایشگر\n\nنمایشگر دستگاه بررسی شد و در دسترس است.\n\n✨ جزئیات فنی صفحه پنهان شده‌اند."
+        if key == "shell getprop":
+            return "📱 سلامت گوشی\n\nمشخصات پایه دستگاه با موفقیت بررسی شد.\n\n✨ شناسه‌ها و تنظیمات داخلی نمایش داده نمی‌شوند."
+        if key == "shell dumpsys":
+            return "🩺 سلامت کلی سیستم\n\nسرویس‌های اصلی دستگاه بررسی شدند.\n\n✨ گزارش خام سیستم عمداً نمایش داده نمی‌شود."
+        if key == "logcat -d":
+            return "📝 بررسی رویدادها\n\nرویدادهای دستگاه بررسی شدند.\n\n✨ متن لاگ خام نمایش داده نمی‌شود."
+        if key == "reboot":
+            return "🔄 راه‌اندازی مجدد\n\nدرخواست راه‌اندازی مجدد ارسال شد."
+        return "✨ عملیات انجام شد\n\nنتیجه با موفقیت دریافت شد.\n\nجزئیات فنی برای ساده ماندن رابط نمایش داده نمی‌شوند."
+
+    def active_app_name(self, raw):
+        known = {
+            "com.android.settings":"تنظیمات",
+            "com.android.systemui":"رابط کاربری سیستم",
+            "com.android.chrome":"Google Chrome",
+            "com.google.android.youtube":"YouTube",
+            "com.instagram.android":"Instagram",
+            "com.google.android.gm":"Gmail",
+            "com.google.android.apps.maps":"Google Maps",
+            "com.android.camera":"دوربین",
+            "com.samsung.android.app.contacts":"مخاطبین",
+            "com.samsung.android.dialer":"تلفن",
+            "com.samsung.android.messaging":"پیام‌ها",
+            "com.sec.android.app.launcher":"صفحه اصلی",
+        }
+        for pkg, name in known.items():
+            if pkg in raw:
+                return name
+        return "یک برنامه در حال اجراست"
+
+    def toggle_simple_mode(self, checked):
+        self.simple_mode = True
+        if hasattr(self, "mode_label"):
+            self.mode_label.setText("🟢 رابط ساده فعال")
+
 
     def toggle_simple_mode(self, checked):
         self.simple_mode = checked
