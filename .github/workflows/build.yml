@@ -9,28 +9,47 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: دریافت سورس
         uses: actions/checkout@v4
-      - name: Setup Python
+
+      - name: نصب Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+
+      - name: نصب وابستگی‌ها
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pyinstaller
-      - name: Download Android platform-tools
+          python -m pip install pyinstaller pillow cairosvg
+
+      - name: دریافت فونت Vazirmatn
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force fonts | Out-Null
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/fonts/ttf/Vazirmatn-Regular.ttf" -OutFile "fonts/Vazirmatn-Regular.ttf"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/rastikerdar/vazirmatn/v33.003/OFL.txt" -OutFile "fonts/OFL.txt"
+
+      - name: دریافت Android platform-tools
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile platform-tools.zip
           Expand-Archive platform-tools.zip -DestinationPath .
           Remove-Item platform-tools.zip
-      - name: Build Windows app
+
+      - name: ساخت آیکون ویندوز از لوگوی SEPEHR ADB HUB
         shell: pwsh
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SEPEHR-ADB-HUB sepehradb.py
-      - name: Package
+        run: |
+          python -c "import cairosvg; cairosvg.svg2png(url='assets/sepehradb.svg',write_to='icon.png',output_width=512,output_height=512)"
+          python -c "from PIL import Image; Image.open('icon.png').convert('RGBA').save('SEPEHR-ADB-HUB.ico',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+      - name: ساخت EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --icon "SEPEHR-ADB-HUB.ico" --add-data "assets/sepehradb.svg:assets" --add-data "fonts/Vazirmatn-Regular.ttf:fonts" --name SEPEHR-ADB-HUB sepehradb.py
+
+      - name: آماده‌سازی بسته
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
@@ -39,10 +58,31 @@ jobs:
           Copy-Item platform-tools/AdbWinApi.dll release/
           Copy-Item platform-tools/AdbWinUsbApi.dll release/
           Copy-Item assets/sepehradb.svg release/
+          Copy-Item fonts/OFL.txt release/
           Copy-Item README.md release/
-          Compress-Archive -Path release/* -DestinationPath SEPEHR-ADB-HUB-Windows.zip -Force
-      - name: Upload artifact
+
+      - name: نصب Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: ساخت نصب‌کننده ویندوز
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force installer | Out-Null
+          & "$" + "{env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: بسته ZIP پشتیبان
+        shell: pwsh
+        run: Compress-Archive -Path release/* -DestinationPath SEPEHR-ADB-HUB-Windows-Portable.zip -Force
+
+      - name: انتشار Artifact نصب‌کننده
         uses: actions/upload-artifact@v4
         with:
-          name: SEPEHR-ADB-HUB-Windows
-          path: SEPEHR-ADB-HUB-Windows.zip
+          name: SEPEHR-ADB-HUB-Windows-Installer
+          path: installer/SEPEHR-ADB-HUB-Setup.exe
+
+      - name: انتشار Artifact نسخه پرتابل
+        uses: actions/upload-artifact@v4
+        with:
+          name: SEPEHR-ADB-HUB-Windows-Portable
+          path: SEPEHR-ADB-HUB-Windows-Portable.zip
