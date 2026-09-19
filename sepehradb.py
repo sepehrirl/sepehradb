@@ -354,47 +354,55 @@ class Hub(QMainWindow):
     def apply_snapshot(self, d):
         for key, widget in self.cards.items():
             widget.setText(d.get(key, "—"))
-        self.health.setText(f"●  {d.get('model','دستگاه')}  •  {d.get('android','Android')}  •  باتری {d.get('level','—')}  •  دما {d.get('temp','—')}")
+        self.health.setText(f"●  {d.get('model','دستگاه')}  •  Android {d.get('android','—')}  •  باتری {d.get('level','—')}  •  دما {d.get('temp','—')}")
         self.health.setStyleSheet(f"color:{GREEN};")
+
         info = [
-            "=== هویت دستگاه ===",
-            f"مدل: {d['model']}", f"سازنده: {d['manufacturer']}", f"برند: {d['brand']}",
-            f"Device: {d['device']}", f"Product: {d['product']}", f"Serial: {d['serial']}",
+            "📱  مشخصات اصلی گوشی", "",
+            f"مدل گوشی: {d['model']}",
+            f"سازنده: {d['manufacturer']}",
+            f"نسخه اندروید: {d['android']}",
+            f"سطح امنیت: {d['security']}",
             "",
-            "=== سیستم‌عامل ===",
-            f"Android: {d['android']}", f"SDK: {d['sdk']}", f"Security Patch: {d['security']}",
-            f"Build: {d['build']}", f"Bootloader: {d['bootloader']}", f"ABI: {d['abi']}", f"ABI64: {d['abi64']}",
+            "⚙️  عملکرد دستگاه", "",
+            f"پردازنده: {d['soc'].strip() or 'نامشخص'}",
+            f"RAM: {d['ram']}",
+            f"دمای فعلی: {d['temp']}",
             "",
-            "=== سخت‌افزار ===", f"Hardware: {d['hardware']}", f"SoC: {d['soc']}", f"Kernel: {d['kernel']}",
+            "🔋  باتری", "",
+            f"شارژ: {d['level']}",
+            f"ولتاژ: {d['voltage']}",
             "",
-            "=== نمایشگر ===", d['display'],
+            "📺  نمایشگر", "",
+            "وضعیت: فعال و در دسترس",
             "",
-            "=== باتری ===", d['battery'],
+            "🗂️  حافظه", "",
+            "وضعیت فضای ذخیره‌سازی: بررسی شد",
             "",
-            "=== حافظه ===", d['mem'],
-            "",
-            "=== فضای ذخیره‌سازی ===", d['storage'],
+            "🛡️  حریم رابط کاربری", "",
+            "شناسه‌های فنی، fingerprint، serial و خروجی خام سیستم در این صفحه نمایش داده نمی‌شوند."
         ]
         self.info.setPlainText("\n".join(info))
-        cpu_lines = d["cpu"].splitlines()[:12]
-        self.monitor.setPlainText(
-            "\n".join([
-                "SEPEHR ADB HUB • پایش زنده",
-                "",
-                f"دستگاه       {d['model']}",
-                f"اندروید      {d['android']}  / SDK {d['sdk']}",
-                f"باتری        {d['level']}",
-                f"دما           {d['temp']}",
-                f"ولتاژ         {d['voltage']}",
-                f"RAM           {d['ram']}",
-                "",
-                "CPU:",
-                *cpu_lines,
-                "",
-                "THERMAL:",
-                *d["thermal"].splitlines()[:12],
-            ])
-        )
+        self.animate_widget(self.info)
+
+        cpu = re.search(r"(\d+(?:\.\d+)?)%\s+", d["cpu"])
+        cpu_value = cpu.group(1) + "%" if cpu else "در حال پایش"
+        monitor = [
+            "📊  وضعیت لحظه‌ای", "",
+            f"گوشی: {d['model']}",
+            f"Android: {d['android']}",
+            f"باتری: {d['level']}",
+            f"دما: {d['temp']}",
+            f"RAM: {d['ram']}",
+            f"فعالیت پردازنده: {cpu_value}",
+            "حرارت: بررسی شد",
+            "نمایشگر: فعال",
+            "",
+            "✨ فقط اطلاعات لازم برای فهم وضعیت گوشی نمایش داده می‌شود."
+        ]
+        self.monitor.setPlainText("\n".join(monitor))
+        self.animate_widget(self.monitor)
+
 
     def run(self, args, timeout=20):
         if not self.serial:
@@ -475,9 +483,8 @@ class Hub(QMainWindow):
         self.run(args, 35 if args == ["shell","dumpsys"] else 20)
 
     def custom_command(self):
-        text = self.cmd_box.text().strip()
-        if not text: return
-        self.run(text.split(), 30)
+        self.display("✨ اجرای دستور خام در این نسخه برای ساده ماندن رابط در دسترس نیست.")
+
 
     def load_apps(self):
         if not self.serial:
