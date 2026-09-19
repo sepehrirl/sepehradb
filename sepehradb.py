@@ -238,15 +238,17 @@ class Hub(QMainWindow):
 
     def info_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("اطلاعات دستگاه", "جزئیات سخت‌افزار، نرم‌افزار، نمایشگر، باتری و ساخت سیستم"))
-        self.info = QTextEdit(); self.info.setReadOnly(True); self.info.setObjectName("console")
+        l.addWidget(self.header("اطلاعات دستگاه", "اطلاعات مهم گوشی به شکل ساده و خوانا"))
+        self.info = QTextEdit(); self.info.setReadOnly(True); self.info.setObjectName("pretty")
         l.addWidget(self.info); return w
+
 
     def monitor_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("مانیتور زنده", "اطلاعات لحظه‌ای ADB؛ بروزرسانی خودکار هر چند ثانیه"))
-        self.monitor = QTextEdit(); self.monitor.setReadOnly(True); self.monitor.setObjectName("console")
+        l.addWidget(self.header("مانیتور زنده", "وضعیت لحظه‌ای گوشی، بدون نمایش لاگ یا کد"))
+        self.monitor = QTextEdit(); self.monitor.setReadOnly(True); self.monitor.setObjectName("pretty")
         l.addWidget(self.monitor); return w
+
 
     def tools_page(self):
         w = QWidget(); l = QVBoxLayout(w)
@@ -306,19 +308,13 @@ class Hub(QMainWindow):
 
     def console_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("لاگ و کنسول", "خروجی دستورات و لاگ‌های ADB"))
-        self.out = QTextEdit(); self.out.setReadOnly(True); self.out.setObjectName("console"); l.addWidget(self.out)
-        row = QHBoxLayout()
-        self.cmd_box = QLineEdit(); self.cmd_box.setPlaceholderText("مثلاً: shell dumpsys battery")
-        go = QPushButton("▶ اجرای دستور"); go.setObjectName("action"); go.clicked.connect(self.custom_command)
-        clear = QPushButton("پاک کردن"); clear.clicked.connect(self.out.clear)
-        self.mode_label = QLabel("🟢 حالت ساده فعال"); self.mode_label.setObjectName("mode")
-        simple = QCheckBox("توضیح ساده"); simple.setChecked(True); simple.setObjectName("simple")
-        simple.toggled.connect(self.toggle_simple_mode)
-        row.addWidget(self.cmd_box); row.addWidget(go); row.addWidget(clear); row.addWidget(simple); row.addWidget(self.mode_label); l.addLayout(row)
-        hint = QLabel("💡 حالت ساده روشن است؛ برنامه قبل از نتیجه فنی توضیح می‌دهد این دستور چه کاری انجام می‌دهد.")
+        l.addWidget(self.header("مرکز نتایج", "نتیجه ابزارها به زبان ساده نمایش داده می‌شود؛ کد و لاگ خام حذف شده است."))
+        self.out = QTextEdit(); self.out.setReadOnly(True); self.out.setObjectName("pretty")
+        l.addWidget(self.out)
+        hint = QLabel("✨ فقط نتیجه قابل‌فهم را می‌بینی؛ جزئیات فنی برای شلوغ نکردن رابط پنهان هستند.")
         hint.setObjectName("hint"); l.addWidget(hint)
         return w
+
 
     def refresh_devices(self):
         raw = run_process(self.adb, ["devices"], 5)
