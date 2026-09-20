@@ -685,7 +685,9 @@ QSpinBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding
 QComboBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding:8px;color:{TEXT};}}
 QProgressBar{{background:#091722;border:1px solid #173747;border-radius:9px;height:18px;}}
 QProgressBar::chunk{{background:{GREEN};border-radius:8px;}}
-"""\n\nif __name__=="__main__":
+"""
+
+if __name__=="__main__":
     app=QApplication(sys.argv)
     fp=resource_path("fonts/Vazirmatn-Regular.ttf")
     if os.path.exists(fp):
