@@ -23,8 +23,19 @@ def resource_path(relative):
     return os.path.join(base, relative)
 
 def adb_path():
-    local = resource_path(os.path.join("platform-tools", "adb.exe"))
-    return local if os.path.exists(local) else shutil.which("adb") or "adb"
+    # In a frozen build, adb.exe is shipped beside the EXE by the release workflow.
+    # Keep platform-tools/ as a development/fallback location, then PATH as a last resort.
+    exe_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(ROOT)
+    candidates = [
+        exe_dir / "adb.exe",
+        exe_dir / "platform-tools" / "adb.exe",
+        Path(resource_path("adb.exe")),
+        Path(resource_path(os.path.join("platform-tools", "adb.exe"))),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("adb") or ""
 
 def run_process(adb, args, timeout=15):
     try:
@@ -61,15 +72,17 @@ class SnapshotRunner(QThread):
     def a(self, args, timeout=8):
         return run_process(self.adb, ["-s", self.serial, *args], timeout)
     def run(self):
-        p = self.a(["shell", "getprop"], 8)
-        battery = self.a(["shell", "dumpsys", "battery"], 8)
-        mem = self.a(["shell", "dumpsys", "meminfo"], 8)
-        cpu = self.a(["shell", "dumpsys", "cpuinfo"], 8)
-        display = self.a(["shell", "wm", "size"], 5) + "\n" + self.a(["shell", "wm", "density"], 5)
-        storage = self.a(["shell", "df", "-h", "/data"], 5)
-        thermal = self.a(["shell", "dumpsys", "thermalservice"], 7)
-        wifi = self.a(["shell", "dumpsys", "wifi"], 7)
-        top = self.a(["shell", "dumpsys", "activity", "top"], 7)
+        # Keep automatic monitoring lightweight. Expensive diagnostics such as
+        # Wi-Fi, thermalservice and activity/top remain on-demand in Tools.
+        p = self.a(["shell", "getprop"], 6)
+        battery = self.a(["shell", "dumpsys", "battery"], 5)
+        mem = self.a(["shell", "dumpsys", "meminfo"], 5)
+        cpu = self.a(["shell", "dumpsys", "cpuinfo"], 5)
+        display = self.a(["shell", "wm", "size"], 4) + "\n" + self.a(["shell", "wm", "density"], 4)
+        storage = self.a(["shell", "df", "-h", "/data"], 4)
+        thermal = "برای کاهش مصرف، فقط از بخش ابزارها اجرا می‌شود."
+        wifi = ""
+        top = ""
         vals = {
             "model": prop(p, "ro.product.model"),
             "manufacturer": prop(p, "ro.product.manufacturer"),
@@ -118,8 +131,9 @@ class Hub(QMainWindow):
         super().__init__()
         self.adb = adb_path()
         self.serial = ""
-        if self.adb == "adb":
-            LOGGER.warning("ADB executable was not bundled or found on PATH.")
+        self.adb_available = bool(self.adb and os.path.isfile(self.adb))
+        if not self.adb_available:
+            LOGGER.error("ADB executable was not found beside the app or on PATH.")
         self.runner = None
         self.snapshot_runner = None
         self.refreshing = False
@@ -132,14 +146,27 @@ class Hub(QMainWindow):
         self.setWindowIcon(QIcon(resource_path(os.path.join("assets", "sepehradb.svg"))))
         self.setStyleSheet(STYLE)
         self.build()
-        self.refresh_devices()
-        self.device_timer = QTimer(self)
-        self.device_timer.timeout.connect(self.refresh_devices)
-        self.device_timer.start(3000)
+        if not self.adb_available:
+            self.conn.setText("●  ADB پیدا نشد")
+            self.conn.setStyleSheet(f"color:{RED};")
+            QTimer.singleShot(250, self.show_adb_missing)
+        else:
+            self.refresh_devices()
+            self.device_timer = QTimer(self)
+            self.device_timer.timeout.connect(self.refresh_devices)
+            self.device_timer.start(3000)
 
-        self.monitor_timer = QTimer(self)
-        self.monitor_timer.timeout.connect(self.refresh_now)
-        self.monitor_timer.start(5000)
+            self.monitor_timer = QTimer(self)
+            self.monitor_timer.timeout.connect(self.refresh_now)
+            self.monitor_timer.start(8000)
+
+    def show_adb_missing(self):
+        QMessageBox.critical(
+            self,
+            "ADB پیدا نشد",
+            "فایل adb.exe در کنار برنامه پیدا نشد و ADB در PATH ویندوز هم در دسترس نیست.\n\n"
+            "اگر از نسخه Portable استفاده می‌کنی، مطمئن شو adb.exe و دو DLL مربوط به آن کنار فایل EXE باقی مانده‌اند."
+        )
 
     def target(self):
         return ["-s", self.serial] if self.serial else []
@@ -316,6 +343,8 @@ class Hub(QMainWindow):
         return w
 
     def refresh_devices(self):
+        if not self.adb_available:
+            return
         raw = run_process(self.adb, ["devices"], 5)
         devices = []
         for line in raw.splitlines():
@@ -426,6 +455,9 @@ class Hub(QMainWindow):
         )
 
     def run(self, args, timeout=20):
+        if not self.adb_available:
+            self.show_adb_missing()
+            return False
         if not self.serial:
             QMessageBox.warning(self, "ADB", "ابتدا یک دستگاه متصل انتخاب کن.")
             return False
@@ -445,6 +477,9 @@ class Hub(QMainWindow):
         return True
 
     def run_to_network(self, args, timeout=20):
+        if not self.adb_available:
+            self.show_adb_missing()
+            return False
         if not self.serial:
             QMessageBox.warning(self, "ADB", "ابتدا یک دستگاه متصل انتخاب کن.")
             return False
@@ -494,16 +529,37 @@ class Hub(QMainWindow):
             self.run(args, 30)
 
     def load_apps(self):
+        if not self.adb_available:
+            self.show_adb_missing()
+            return
         if not self.serial:
             self.apps_out.setPlainText("ابتدا یک دستگاه متصل انتخاب کن.")
             return
-        text = self.device_cmd(["shell","pm","list","packages"], 25)
+
+        # Never run package enumeration on the GUI thread; large app lists can
+        # otherwise freeze the whole window for several seconds.
         needle = self.app_filter.text().strip().lower()
-        lines = [x for x in text.splitlines() if not needle or needle in x.lower()]
-        lines.sort(key=str.casefold)
-        self.apps_out.setPlainText("\n".join(lines) if lines else "موردی پیدا نشد.")
+        runner = CommandRunner(self.adb, self.target() + ["shell", "pm", "list", "packages"], 25)
+        self.runner = runner
+        self.apps_out.setPlainText("در حال دریافت فهرست برنامه‌ها…")
+
+        def finish(text, r=runner, filter_text=needle):
+            if self._closing:
+                return
+            lines = [x for x in text.splitlines() if not filter_text or filter_text in x.lower()]
+            lines.sort(key=str.casefold)
+            self.apps_out.setPlainText("\n".join(lines) if lines else "موردی پیدا نشد.")
+            if self.runner is r:
+                self.runner = None
+
+        runner.done.connect(finish)
+        runner.finished.connect(runner.deleteLater)
+        runner.start()
 
     def screenshot(self):
+        if not self.adb_available:
+            self.show_adb_missing()
+            return
         if not self.serial: return
         path,_ = QFileDialog.getSaveFileName(self, "ذخیره اسکرین‌شات", "sepehradb-screenshot.png", "PNG (*.png)")
         if not path: return
@@ -519,6 +575,9 @@ class Hub(QMainWindow):
             QMessageBox.warning(self, "خطا", str(e))
 
     def record(self):
+        if not self.adb_available:
+            self.show_adb_missing()
+            return
         if not self.serial: return
         path,_ = QFileDialog.getSaveFileName(self, "ذخیره ضبط صفحه", "sepehradb-record.mp4", "MP4 (*.mp4)")
         if not path: return
@@ -535,6 +594,9 @@ class Hub(QMainWindow):
         QMessageBox.information(self, "ضبط صفحه", "ضبط شروع شد؛ حداکثر زمان ۱۸۰ ثانیه است.")
 
     def scrcpy(self):
+        if not self.adb_available:
+            self.show_adb_missing()
+            return
         exe = shutil.which("scrcpy") or resource_path(os.path.join("scrcpy","scrcpy.exe"))
         if not os.path.exists(exe):
             QMessageBox.warning(self, "scrcpy", "scrcpy در سیستم پیدا نشد. می‌توانی آن را جداگانه نصب و به PATH اضافه کنی.")
