@@ -1,15 +1,20 @@
-import os, re, sys, shutil, subprocess, threading
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QPropertyAnimation, QEasingCurve
+import os, re, sys, shutil, subprocess, threading, shlex, logging
+from pathlib import Path
+from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from PySide6.QtGui import QIcon, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QStackedWidget, QTextEdit, QGridLayout, QMessageBox,
-    QFileDialog, QScrollArea, QComboBox, QLineEdit, QProgressBar, QGraphicsOpacityEffect, QCheckBox
+    QFileDialog, QScrollArea, QComboBox, QLineEdit, QProgressBar
 )
 from PySide6.QtSvgWidgets import QSvgWidget
 
 APP_NAME = "SEPEHR ADB HUB"
 ROOT = os.path.dirname(os.path.abspath(__file__))
+APP_VERSION = "2.2"
+LOGGER = logging.getLogger("sepehr_adb_hub")
+if not LOGGER.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 BG="#071018"; SURFACE="#0d1822"; SURFACE2="#11212d"; BORDER="#1c3342"
 TEXT="#eef7f4"; MUTED="#89a0ad"; GREEN="#39e6a5"; RED="#ff6876"; BLUE="#67b7ff"; GOLD="#ffcf66"
 
@@ -30,8 +35,10 @@ def run_process(adb, args, timeout=15):
         )
         return (p.stdout + p.stderr).strip()
     except subprocess.TimeoutExpired:
+        LOGGER.warning("ADB command timed out: %s", args)
         return "ERROR: زمان اجرای دستور تمام شد."
     except Exception as e:
+        LOGGER.exception("ADB command failed: %s", args)
         return "ERROR: " + str(e)
 
 def prop(text, key):
@@ -111,12 +118,13 @@ class Hub(QMainWindow):
         super().__init__()
         self.adb = adb_path()
         self.serial = ""
+        if self.adb == "adb":
+            LOGGER.warning("ADB executable was not bundled or found on PATH.")
         self.runner = None
         self.snapshot_runner = None
         self.refreshing = False
-        self._page_effects = {}
-        self._page_anims = {}
-        self.simple_mode = True
+        self._last_device_signature = ()
+        self._closing = False
         self.setWindowTitle(APP_NAME)
         self.resize(1380, 860)
         self.setMinimumSize(1120, 720)
@@ -125,9 +133,13 @@ class Hub(QMainWindow):
         self.setStyleSheet(STYLE)
         self.build()
         self.refresh_devices()
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh_devices)
-        self.timer.start(3000)
+        self.device_timer = QTimer(self)
+        self.device_timer.timeout.connect(self.refresh_devices)
+        self.device_timer.start(3000)
+
+        self.monitor_timer = QTimer(self)
+        self.monitor_timer.timeout.connect(self.refresh_now)
+        self.monitor_timer.start(5000)
 
     def target(self):
         return ["-s", self.serial] if self.serial else []
@@ -170,7 +182,7 @@ class Hub(QMainWindow):
         sl.addStretch()
 
         self.conn = QLabel("●  در حال بررسی ADB"); self.conn.setObjectName("connection"); sl.addWidget(self.conn)
-        ver = QLabel("ویندوز • نسخه 2.1 UI"); ver.setObjectName("muted"); sl.addWidget(ver)
+        ver = QLabel(f"ویندوز • نسخه {APP_VERSION}"); ver.setObjectName("muted"); sl.addWidget(ver)
         main.addWidget(side); main.addWidget(self.nav, 1)
 
         self.add_page("Dashboard", self.dashboard_page())
@@ -186,21 +198,7 @@ class Hub(QMainWindow):
         self.pages[key] = widget; self.nav.addWidget(widget)
 
     def show_page(self, key):
-        page = self.pages[key]
-        self.nav.setCurrentWidget(page)
-        effect = self._page_effects.get(key)
-        if effect is None:
-            effect = QGraphicsOpacityEffect(page)
-            page.setGraphicsEffect(effect)
-            self._page_effects[key] = effect
-        effect.setOpacity(0.0)
-        anim = QPropertyAnimation(effect, b"opacity", self)
-        anim.setDuration(260)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._page_anims[key] = anim
-        anim.start()
+        self.nav.setCurrentWidget(self.pages[key])
 
     def header(self, title, desc):
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(4,4,4,12)
@@ -238,28 +236,26 @@ class Hub(QMainWindow):
 
     def info_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("اطلاعات دستگاه", "اطلاعات مهم گوشی به شکل ساده و خوانا"))
-        self.info = QTextEdit(); self.info.setReadOnly(True); self.info.setObjectName("pretty")
+        l.addWidget(self.header("اطلاعات دستگاه", "جزئیات سخت‌افزار، نرم‌افزار، نمایشگر، باتری و ساخت سیستم"))
+        self.info = QTextEdit(); self.info.setReadOnly(True); self.info.setObjectName("console")
         l.addWidget(self.info); return w
-
 
     def monitor_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("مانیتور زنده", "وضعیت لحظه‌ای گوشی، بدون نمایش لاگ یا کد"))
-        self.monitor = QTextEdit(); self.monitor.setReadOnly(True); self.monitor.setObjectName("pretty")
+        l.addWidget(self.header("مانیتور زنده", "اطلاعات لحظه‌ای ADB؛ بروزرسانی خودکار هر چند ثانیه"))
+        self.monitor = QTextEdit(); self.monitor.setReadOnly(True); self.monitor.setObjectName("console")
         l.addWidget(self.monitor); return w
-
 
     def tools_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("ابزارها", "ابزارهای کاربردی؛ نتیجه‌ها ساده و بدون کد و لاگ خام نمایش داده می‌شوند."))
+        l.addWidget(self.header("ابزارها", "ابزارهای تشخیصی و کنترلی ADB برای دستگاهی که خودت مدیریت می‌کنی"))
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        box = QWidget(); g = QGridLayout(box); g.setSpacing(12)
+        box = QWidget(); g = QGridLayout(box); g.setSpacing(10)
         actions = [
-            ("📱 سلامت گوشی", ["shell","getprop"]),
-            ("⚡ پردازنده", ["shell","dumpsys","cpuinfo"]),
+            ("📱 مشخصات کامل", ["shell","getprop"]),
+            ("⚡ مصرف CPU", ["shell","dumpsys","cpuinfo"]),
             ("🧠 حافظه RAM", ["shell","dumpsys","meminfo"]),
-            ("🌡 دما", ["shell","dumpsys","thermalservice"]),
+            ("🌡 حرارت", ["shell","dumpsys","thermalservice"]),
             ("🔋 باتری", ["shell","dumpsys","battery"]),
             ("📡 Wi‑Fi", ["shell","dumpsys","wifi"]),
             ("📺 نمایشگر", ["shell","dumpsys","display"]),
@@ -267,16 +263,19 @@ class Hub(QMainWindow):
             ("👀 برنامه فعال", ["shell","dumpsys","activity","top"]),
             ("📦 برنامه‌های نصب‌شده", ["shell","pm","list","packages"]),
             ("🧩 برنامه‌های کاربر", ["shell","pm","list","packages","-3"]),
-            ("🩺 سلامت کلی سیستم", ["shell","dumpsys"]),
-            ("📝 بررسی رویدادها", ["logcat","-d"]),
+            ("📊 UI Automator", ["shell","uiautomator","dump","/sdcard/window.xml"]),
+            ("🧬 Getprop", ["shell","getprop"]),
+            ("🕵 Dumpsys", ["shell","dumpsys"]),
+            ("📝 Logcat", ["logcat","-d"]),
             ("🔄 راه‌اندازی مجدد", ["reboot"]),
+            ("👆 رویدادهای لمس", ["shell","getevent","-lt"]),
+            ("💻 ترمینال ADB", ["shell"]),
         ]
         for i,(label,args) in enumerate(actions):
             b = QPushButton(label); b.setObjectName("tool")
             b.clicked.connect(lambda _, a=args: self.tool_action(a))
             g.addWidget(b, i//3, i%3)
         scroll.setWidget(box); l.addWidget(scroll); return w
-
 
     def network_page(self):
         w = QWidget(); l = QVBoxLayout(w)
@@ -288,7 +287,9 @@ class Hub(QMainWindow):
             ("🧭 Route", ["shell","ip","route"]),
             ("🔌 وضعیت شبکه", ["shell","dumpsys","connectivity"]),
         ]:
-            b = QPushButton(label); b.setObjectName("tool"); b.clicked.connect(lambda _,a=args:self.run(a,20)); row.addWidget(b)
+            b = QPushButton(label); b.setObjectName("tool")
+            b.clicked.connect(lambda _,a=args:self.run_to_network(a,20))
+            row.addWidget(b)
         l.addLayout(row)
         self.network_out = QTextEdit(); self.network_out.setReadOnly(True); self.network_out.setObjectName("console")
         l.addWidget(self.network_out); return w
@@ -305,34 +306,50 @@ class Hub(QMainWindow):
 
     def console_page(self):
         w = QWidget(); l = QVBoxLayout(w)
-        l.addWidget(self.header("مرکز نتایج", "نتیجه ابزارها به زبان ساده نمایش داده می‌شود؛ کد و لاگ خام حذف شده است."))
-        self.out = QTextEdit(); self.out.setReadOnly(True); self.out.setObjectName("pretty")
-        l.addWidget(self.out)
-        hint = QLabel("✨ فقط نتیجه قابل‌فهم را می‌بینی؛ جزئیات فنی برای شلوغ نکردن رابط پنهان هستند.")
-        hint.setObjectName("hint"); l.addWidget(hint)
+        l.addWidget(self.header("لاگ و کنسول", "خروجی دستورات و لاگ‌های ADB"))
+        self.out = QTextEdit(); self.out.setReadOnly(True); self.out.setObjectName("console"); l.addWidget(self.out)
+        row = QHBoxLayout()
+        self.cmd_box = QLineEdit(); self.cmd_box.setPlaceholderText("مثلاً: shell dumpsys battery")
+        go = QPushButton("▶ اجرای دستور"); go.setObjectName("action"); go.clicked.connect(self.custom_command)
+        clear = QPushButton("پاک کردن"); clear.clicked.connect(self.out.clear)
+        row.addWidget(self.cmd_box); row.addWidget(go); row.addWidget(clear); l.addLayout(row)
         return w
-
 
     def refresh_devices(self):
         raw = run_process(self.adb, ["devices"], 5)
-        devices = [x.split("\t")[0] for x in raw.splitlines() if "\tdevice" in x]
+        devices = []
+        for line in raw.splitlines():
+            if "\t" in line:
+                serial, state = line.split("\t", 1)
+                if state.strip() == "device":
+                    devices.append(serial.strip())
+
         current = self.serial
-        self.device_box.blockSignals(True); self.device_box.clear()
-        for s in devices:
-            self.device_box.addItem(s)
-        self.device_box.blockSignals(False)
+        changed = tuple(devices) != self._last_device_signature
+        self._last_device_signature = tuple(devices)
+
+        self.device_box.blockSignals(True)
+        self.device_box.clear()
+        self.device_box.addItems(devices)
         if current in devices:
             self.device_box.setCurrentText(current)
         elif devices:
-            self.serial = devices[0]; self.device_box.setCurrentText(self.serial)
+            self.serial = devices[0]
+            self.device_box.setCurrentText(self.serial)
         else:
             self.serial = ""
+        self.device_box.blockSignals(False)
+
         if not devices:
-            self.conn.setText("●  هیچ دستگاهی متصل نیست"); self.conn.setStyleSheet(f"color:{RED};")
-            self.health.setText("●  دستگاهی برای پایش وجود ندارد"); self.health.setStyleSheet(f"color:{RED};")
+            self.conn.setText("●  هیچ دستگاهی متصل نیست")
+            self.conn.setStyleSheet(f"color:{RED};")
+            self.health.setText("●  دستگاهی برای پایش وجود ندارد")
+            self.health.setStyleSheet(f"color:{RED};")
             return
-        self.conn.setText(f"●  ADB آنلاین • {len(devices)} دستگاه"); self.conn.setStyleSheet(f"color:{GREEN};")
-        if not self.refreshing:
+
+        self.conn.setText(f"●  ADB آنلاین • {len(devices)} دستگاه")
+        self.conn.setStyleSheet(f"color:{GREEN};")
+        if changed and not self.refreshing:
             self.refresh_now()
 
     def device_changed(self, index):
@@ -343,222 +360,113 @@ class Hub(QMainWindow):
     def refresh_now(self):
         if not self.serial or self.refreshing: return
         self.refreshing = True
-        self.snapshot_runner = SnapshotRunner(self.adb, self.serial)
-        self.snapshot_runner.done.connect(self.apply_snapshot)
-        self.snapshot_runner.finished.connect(lambda: setattr(self, "refreshing", False))
-        self.snapshot_runner.start()
+        runner = SnapshotRunner(self.adb, self.serial)
+        self.snapshot_runner = runner
+        serial_at_start = self.serial
+
+        def finish(data, serial=serial_at_start):
+            if self._closing:
+                return
+            if serial == self.serial:
+                self.apply_snapshot(data)
+
+        runner.done.connect(finish)
+        runner.finished.connect(lambda r=runner: self._snapshot_finished(r))
+        runner.start()
+
+    def _snapshot_finished(self, runner):
+        if self.snapshot_runner is runner:
+            self.snapshot_runner = None
+        self.refreshing = False
+        runner.deleteLater()
 
     def apply_snapshot(self, d):
         for key, widget in self.cards.items():
             widget.setText(d.get(key, "—"))
-        self.health.setText(f"●  {d.get('model','دستگاه')}  •  Android {d.get('android','—')}  •  باتری {d.get('level','—')}  •  دما {d.get('temp','—')}")
+        self.health.setText(f"●  {d.get('model','دستگاه')}  •  {d.get('android','Android')}  •  باتری {d.get('level','—')}  •  دما {d.get('temp','—')}")
         self.health.setStyleSheet(f"color:{GREEN};")
-
         info = [
-            "📱  مشخصات اصلی گوشی", "",
-            f"مدل گوشی: {d['model']}",
-            f"سازنده: {d['manufacturer']}",
-            f"نسخه اندروید: {d['android']}",
-            f"سطح امنیت: {d['security']}",
+            "=== هویت دستگاه ===",
+            f"مدل: {d['model']}", f"سازنده: {d['manufacturer']}", f"برند: {d['brand']}",
+            f"Device: {d['device']}", f"Product: {d['product']}", f"Serial: {d['serial']}",
             "",
-            "⚙️  عملکرد دستگاه", "",
-            f"پردازنده: {d['soc'].strip() or 'نامشخص'}",
-            f"RAM: {d['ram']}",
-            f"دمای فعلی: {d['temp']}",
+            "=== سیستم‌عامل ===",
+            f"Android: {d['android']}", f"SDK: {d['sdk']}", f"Security Patch: {d['security']}",
+            f"Build: {d['build']}", f"Bootloader: {d['bootloader']}", f"ABI: {d['abi']}", f"ABI64: {d['abi64']}",
             "",
-            "🔋  باتری", "",
-            f"شارژ: {d['level']}",
-            f"ولتاژ: {d['voltage']}",
+            "=== سخت‌افزار ===", f"Hardware: {d['hardware']}", f"SoC: {d['soc']}", f"Kernel: {d['kernel']}",
             "",
-            "📺  نمایشگر", "",
-            "وضعیت: فعال و در دسترس",
+            "=== نمایشگر ===", d['display'],
             "",
-            "🗂️  حافظه", "",
-            "وضعیت فضای ذخیره‌سازی: بررسی شد",
+            "=== باتری ===", d['battery'],
             "",
-            "🛡️  حریم رابط کاربری", "",
-            "شناسه‌های فنی، fingerprint، serial و خروجی خام سیستم در این صفحه نمایش داده نمی‌شوند."
+            "=== حافظه ===", d['mem'],
+            "",
+            "=== فضای ذخیره‌سازی ===", d['storage'],
         ]
-        self.info.setHtml(self.simple_html("\n".join(info)))
-        self.animate_widget(self.info)
-
-        cpu = re.search(r"(\d+(?:\.\d+)?)%\s+", d["cpu"])
-        cpu_value = cpu.group(1) + "%" if cpu else "در حال پایش"
-        monitor = [
-            "📊  وضعیت لحظه‌ای", "",
-            f"گوشی: {d['model']}",
-            f"Android: {d['android']}",
-            f"باتری: {d['level']}",
-            f"دما: {d['temp']}",
-            f"RAM: {d['ram']}",
-            f"فعالیت پردازنده: {cpu_value}",
-            "حرارت: بررسی شد",
-            "نمایشگر: فعال",
-            "",
-            "✨ فقط اطلاعات لازم برای فهم وضعیت گوشی نمایش داده می‌شود."
-        ]
-        self.monitor.setHtml(self.simple_html("\n".join(monitor)))
-        self.animate_widget(self.monitor)
-
+        self.info.setPlainText("\n".join(info))
+        cpu_lines = d["cpu"].splitlines()[:12]
+        self.monitor.setPlainText(
+            "\n".join([
+                "SEPEHR ADB HUB • پایش زنده",
+                "",
+                f"دستگاه       {d['model']}",
+                f"اندروید      {d['android']}  / SDK {d['sdk']}",
+                f"باتری        {d['level']}",
+                f"دما           {d['temp']}",
+                f"ولتاژ         {d['voltage']}",
+                f"RAM           {d['ram']}",
+                "",
+                "CPU:",
+                *cpu_lines,
+                "",
+                "THERMAL:",
+                *d["thermal"].splitlines()[:12],
+            ])
+        )
 
     def run(self, args, timeout=20):
         if not self.serial:
             QMessageBox.warning(self, "ADB", "ابتدا یک دستگاه متصل انتخاب کن.")
-            return
-        command_args = self.target() + args
-        self.runner = CommandRunner(self.adb, command_args, timeout)
-        self.runner.done.connect(lambda raw, a=args: self.display(self.friendly_output(a, raw)))
-        self.runner.start()
+            return False
+        runner = CommandRunner(self.adb, self.target() + args, timeout)
+        self.runner = runner
 
-    def simple_html(self, text):
-        rows = [x.strip() for x in str(text).splitlines() if x.strip()]
-        html = [
-            "<html><body style='background:#071018;color:#eef7f4;font-family:Vazirmatn,Segoe UI;font-size:14px;'>"
-        ]
-        for i, row in enumerate(rows):
-            safe = self.html_escape(row)
-            if row.startswith(("📱","🔋","🧠","⚡","🌡","📡","🌐","📺","🗂","👀","📦","🧩","🩺","📝","🔄","✨")):
-                html.append(
-                    f"<div style='background:#0d1822;border:1px solid #1c3342;border-radius:18px;"
-                    f"padding:16px;margin:8px 2px;font-weight:800;font-size:16px;'>{safe}</div>"
-                )
-            elif ":" in row and len(row) < 100:
-                html.append(
-                    f"<div style='background:#11212d;border:1px solid #1c3342;border-radius:14px;"
-                    f"padding:12px;margin:6px 2px;'><span style='color:#89a0ad;'>{safe.split(':',1)[0]}:</span>"
-                    f"<span style='font-weight:800;'> {self.html_escape(row.split(':',1)[1].strip())}</span></div>"
-                )
-            else:
-                html.append(
-                    f"<div style='background:#0d1822;border:1px solid #1c3342;border-radius:14px;"
-                    f"padding:11px 13px;margin:6px 2px;color:#b9c9d0;'>{safe}</div>"
-                )
-        html.append("</body></html>")
-        return "".join(html)
+        def finish(text, r=runner):
+            if self._closing:
+                return
+            self.display(text)
+            if self.runner is r:
+                self.runner = None
 
-    def html_escape(self, value):
-        return str(value).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+        runner.done.connect(finish)
+        runner.finished.connect(runner.deleteLater)
+        runner.start()
+        return True
+
+    def run_to_network(self, args, timeout=20):
+        if not self.serial:
+            QMessageBox.warning(self, "ADB", "ابتدا یک دستگاه متصل انتخاب کن.")
+            return False
+        runner = CommandRunner(self.adb, self.target() + args, timeout)
+        self.runner = runner
+
+        def finish(text, r=runner):
+            if self._closing:
+                return
+            self.network_out.setPlainText(text)
+            self.show_page("Network")
+            if self.runner is r:
+                self.runner = None
+
+        runner.done.connect(finish)
+        runner.finished.connect(runner.deleteLater)
+        runner.start()
+        return True
 
     def display(self, text):
-        self.out.setHtml(self.simple_html(text))
+        self.out.setPlainText(text)
         self.show_page("Console")
-        self.animate_widget(self.out)
-
-
-
-    def animate_widget(self, widget, duration=220):
-        effect = QGraphicsOpacityEffect(widget)
-        widget.setGraphicsEffect(effect)
-        effect.setOpacity(0.0)
-        anim = QPropertyAnimation(effect, b"opacity", self)
-        anim.setDuration(duration)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setEasingCurve(QEasingCurve.OutCubic)
-        widget._sepehr_anim = anim
-        widget._sepehr_effect = effect
-        anim.start()
-
-    def explain_command(self, args):
-        key = " ".join(args)
-        explanations = {
-            "shell getprop": ("مشخصات سیستم", "اطلاعاتی مثل مدل، نسخه اندروید، سازنده و تنظیمات داخلی را می‌خواند."),
-            "shell dumpsys cpuinfo": ("مصرف پردازنده", "وضعیت مصرف CPU و برنامه‌های پرمصرف را بررسی می‌کند."),
-            "shell dumpsys meminfo": ("حافظه RAM", "نحوه مصرف RAM توسط سیستم و برنامه‌ها را بررسی می‌کند."),
-            "shell dumpsys thermalservice": ("دمای دستگاه", "وضعیت حسگرهای حرارتی گوشی را بررسی می‌کند."),
-            "shell dumpsys battery": ("باتری", "درصد شارژ، دما، ولتاژ و وضعیت باتری را نشان می‌دهد."),
-            "shell dumpsys wifi": ("Wi‑Fi", "وضعیت اتصال و اطلاعات شبکه بی‌سیم را بررسی می‌کند."),
-            "shell dumpsys display": ("نمایشگر", "اطلاعات صفحه و تنظیمات نمایشگر را بررسی می‌کند."),
-            "shell df -h": ("فضای ذخیره‌سازی", "فضای استفاده‌شده و خالی حافظه را نشان می‌دهد."),
-            "shell dumpsys activity top": ("برنامه فعال", "مشخص می‌کند الان کدام برنامه روی صفحه باز است."),
-            "shell pm list packages": ("فهرست برنامه‌ها", "نام فنی برنامه‌های نصب‌شده را نمایش می‌دهد."),
-            "shell pm list packages -3": ("برنامه‌های کاربر", "برنامه‌هایی را که معمولاً توسط کاربر نصب شده‌اند نشان می‌دهد."),
-            "shell uiautomator dump /sdcard/window.xml": ("ساختار صفحه", "عناصر صفحه فعلی اندروید را برای عیب‌یابی بررسی می‌کند."),
-            "shell dumpsys": ("گزارش کامل سیستم", "گزارش گسترده‌ای از سرویس‌های داخلی اندروید می‌گیرد."),
-            "logcat -d": ("گزارش رویدادها", "گزارش‌های ثبت‌شده اندروید و برنامه‌ها را برای عیب‌یابی نمایش می‌دهد."),
-            "reboot": ("راه‌اندازی مجدد", "دستگاه انتخاب‌شده را دوباره راه‌اندازی می‌کند.")
-        }
-        return explanations.get(key, ("دستور ADB", "این دستور مستقیماً برای بررسی یا کنترل دستگاه انتخاب‌شده اجرا می‌شود."))
-
-    def friendly_output(self, args, raw):
-        key = " ".join(args)
-        if key == "shell dumpsys battery":
-            level = re.search(r"level:\s*(\d+)", raw)
-            temp = re.search(r"temperature:\s*(\d+)", raw)
-            voltage = re.search(r"voltage:\s*(\d+)", raw)
-            return "\n".join([
-                "🔋 وضعیت باتری", "",
-                f"شارژ فعلی: {(level.group(1)+'%') if level else 'نامشخص'}",
-                f"دمای باتری: {(f'{int(temp.group(1))/10:.1f} °C') if temp else 'نامشخص'}",
-                f"ولتاژ: {(f'{int(voltage.group(1))/1000:.3f} V') if voltage else 'نامشخص'}",
-                "", "✨ اطلاعات فنی باتری نمایش داده نمی‌شود."
-            ])
-        if key == "shell dumpsys meminfo":
-            total = re.search(r"Total RAM:\s*([0-9,]+)K", raw)
-            return "\n".join([
-                "🧠 وضعیت حافظه", "",
-                f"RAM کل: {(int(total.group(1).replace(',',''))/1024):.0f} MB" if total else "RAM کل: نامشخص",
-                "", "✨ جزئیات فنی حافظه پنهان شده‌اند."
-            ])
-        if key == "shell dumpsys cpuinfo":
-            m = re.search(r"(\d+(?:\.\d+)?)%", raw)
-            return f"⚡ وضعیت پردازنده\n\nفعالیت فعلی: {m.group(1)+'%' if m else 'در حال پایش'}\n\n✨ نام پردازش‌های فنی نمایش داده نمی‌شود."
-        if key == "shell dumpsys thermalservice":
-            hot = re.search(r"(CRITICAL|SEVERE|HOT)", raw, re.I)
-            return f"🌡 وضعیت دما\n\nوضعیت کلی: {'نیاز به توجه' if hot else 'عادی'}\n\n✨ جزئیات حسگرها پنهان شده‌اند."
-        if key == "shell dumpsys wifi":
-            connected = bool(re.search(r"(CONNECTED|COMPLETED)", raw, re.I))
-            return f"📡 وضعیت Wi‑Fi\n\nاتصال: {'متصل' if connected else 'وضعیت اتصال مشخص نیست'}\n\n✨ اطلاعات فنی شبکه نمایش داده نمی‌شود."
-        if key in ("shell ip addr","shell ip route","shell dumpsys connectivity"):
-            return "🌐 وضعیت شبکه\n\nاتصال شبکه بررسی شد.\n\n✨ IP، route و شناسه‌های فنی نمایش داده نمی‌شوند."
-        if key == "shell dumpsys activity top":
-            return f"👀 برنامه فعال\n\n{self.active_app_name(raw)}\n\n✨ نام فنی برنامه نمایش داده نمی‌شود."
-        if key.startswith("shell pm list packages"):
-            count = len([x for x in raw.splitlines() if x.startswith("package:")])
-            return f"📦 برنامه‌ها\n\nتعداد برنامه‌های شناسایی‌شده: {count}\n\nبرای دیدن نام برنامه‌ها وارد بخش «برنامه‌ها» شو."
-        if key == "shell df -h":
-            return "🗂 فضای ذخیره‌سازی\n\nفضای حافظه بررسی شد.\n\n✨ جدول فنی حافظه نمایش داده نمی‌شود."
-        if key == "shell dumpsys display":
-            return "📺 نمایشگر\n\nنمایشگر دستگاه بررسی شد و در دسترس است.\n\n✨ جزئیات فنی صفحه پنهان شده‌اند."
-        if key == "shell getprop":
-            return "📱 سلامت گوشی\n\nمشخصات پایه دستگاه با موفقیت بررسی شد.\n\n✨ شناسه‌ها و تنظیمات داخلی نمایش داده نمی‌شوند."
-        if key == "shell dumpsys":
-            return "🩺 سلامت کلی سیستم\n\nسرویس‌های اصلی دستگاه بررسی شدند.\n\n✨ گزارش خام سیستم عمداً نمایش داده نمی‌شود."
-        if key == "logcat -d":
-            return "📝 بررسی رویدادها\n\nرویدادهای دستگاه بررسی شدند.\n\n✨ متن لاگ خام نمایش داده نمی‌شود."
-        if key == "reboot":
-            return "🔄 راه‌اندازی مجدد\n\nدرخواست راه‌اندازی مجدد ارسال شد."
-        return "✨ عملیات انجام شد\n\nنتیجه با موفقیت دریافت شد.\n\nجزئیات فنی برای ساده ماندن رابط نمایش داده نمی‌شوند."
-
-    def active_app_name(self, raw):
-        known = {
-            "com.android.settings":"تنظیمات",
-            "com.android.systemui":"رابط کاربری سیستم",
-            "com.android.chrome":"Google Chrome",
-            "com.google.android.youtube":"YouTube",
-            "com.instagram.android":"Instagram",
-            "com.google.android.gm":"Gmail",
-            "com.google.android.apps.maps":"Google Maps",
-            "com.android.camera":"دوربین",
-            "com.samsung.android.app.contacts":"مخاطبین",
-            "com.samsung.android.dialer":"تلفن",
-            "com.samsung.android.messaging":"پیام‌ها",
-            "com.sec.android.app.launcher":"صفحه اصلی",
-        }
-        for pkg, name in known.items():
-            if pkg in raw:
-                return name
-        return "یک برنامه در حال اجراست"
-
-    def toggle_simple_mode(self, checked):
-        self.simple_mode = True
-        if hasattr(self, "mode_label"):
-            self.mode_label.setText("🟢 رابط ساده فعال")
-
-
-    def toggle_simple_mode(self, checked):
-        self.simple_mode = checked
-        self.mode_label.setText("🟢 حالت ساده فعال" if checked else "🔧 حالت فنی فعال")
 
     def tool_action(self, args):
         if args == ["shell"]:
@@ -574,41 +482,26 @@ class Hub(QMainWindow):
         self.run(args, 35 if args == ["shell","dumpsys"] else 20)
 
     def custom_command(self):
-        self.display("✨ اجرای دستور خام در این نسخه برای ساده ماندن رابط در دسترس نیست.")
-
+        text = self.cmd_box.text().strip()
+        if not text:
+            return
+        try:
+            args = shlex.split(text, posix=False)
+        except ValueError as exc:
+            QMessageBox.warning(self, "دستور نامعتبر", f"نحو دستور قابل پردازش نیست:\n{exc}")
+            return
+        if args:
+            self.run(args, 30)
 
     def load_apps(self):
         if not self.serial:
             self.apps_out.setPlainText("ابتدا یک دستگاه متصل انتخاب کن.")
             return
         text = self.device_cmd(["shell","pm","list","packages"], 25)
-        packages = [x.split(":",1)[1].strip() for x in text.splitlines() if x.startswith("package:")]
-        known = {
-            "com.android.settings":"تنظیمات",
-            "com.android.chrome":"Google Chrome",
-            "com.google.android.youtube":"YouTube",
-            "com.instagram.android":"Instagram",
-            "com.google.android.gm":"Gmail",
-            "com.google.android.apps.maps":"Google Maps",
-            "com.android.camera":"دوربین",
-            "com.samsung.android.app.contacts":"مخاطبین",
-            "com.samsung.android.dialer":"تلفن",
-            "com.samsung.android.messaging":"پیام‌ها",
-            "com.sec.android.app.launcher":"صفحه اصلی",
-            "com.android.calculator2":"ماشین‌حساب",
-            "com.google.android.apps.photos":"Google Photos",
-        }
         needle = self.app_filter.text().strip().lower()
-        names = [known[p] for p in packages if p in known]
-        if needle:
-            names = [n for n in names if needle in n.lower()]
-        if not names:
-            names = ["برنامه نصب‌شده"] if not needle and packages else []
-        lines = ["📦 برنامه‌ها", "", f"تعداد برنامه‌های شناسایی‌شده: {len(packages)}", ""]
-        lines += [f"• {n}" for n in dict.fromkeys(names)]
-        if not names:
-            lines.append("موردی مطابق جست‌وجو پیدا نشد.")
-        self.apps_out.setHtml(self.simple_html("\n".join(lines)))
+        lines = [x for x in text.splitlines() if not needle or needle in x.lower()]
+        lines.sort(key=str.casefold)
+        self.apps_out.setPlainText("\n".join(lines) if lines else "موردی پیدا نشد.")
 
     def screenshot(self):
         if not self.serial: return
@@ -646,7 +539,25 @@ class Hub(QMainWindow):
         if not os.path.exists(exe):
             QMessageBox.warning(self, "scrcpy", "scrcpy در سیستم پیدا نشد. می‌توانی آن را جداگانه نصب و به PATH اضافه کنی.")
             return
-        subprocess.Popen([exe, *self.target(), "--max-size","1920","--video-bit-rate","20M","--max-fps","60"])
+        try:
+            subprocess.Popen(
+                [exe, *self.target(), "--max-size", "1920",
+                 "--video-bit-rate", "20M", "--max-fps", "60"],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "scrcpy", f"اجرای scrcpy ناموفق بود:\n{exc}")
+
+    def closeEvent(self, event):
+        self._closing = True
+        for timer in (getattr(self, "device_timer", None), getattr(self, "monitor_timer", None)):
+            if timer:
+                timer.stop()
+        for worker in (self.runner, self.snapshot_runner):
+            if worker and worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(1200)
+        event.accept()
 
 STYLE = f"""
 QWidget{{background:{BG};color:{TEXT};font-family:'Vazirmatn','Segoe UI';font-size:10.5pt;}}
@@ -654,10 +565,7 @@ QMainWindow{{background:{BG};}}
 QFrame#sidebar{{background:{SURFACE};border:1px solid {BORDER};border-radius:20px;}}
 QLabel#brand{{font-size:18pt;font-weight:900;}}
 QLabel#title{{font-size:24pt;font-weight:900;}}
-QLabel{{background:transparent;border:0;}}
-QLabel#muted{{color:{MUTED};background:transparent;border:0;}}
-QLabel#hint{{color:{MUTED};background:transparent;border:0;padding:6px 2px;}}
-QLabel#mode{{color:{GREEN};background:transparent;border:0;font-weight:800;padding:4px;}}
+QLabel#muted{{color:{MUTED};}}
 QLabel#connection{{color:{GREEN};font-weight:800;padding:8px 0;}}
 QLabel#status{{background:{SURFACE};border:1px solid {BORDER};border-radius:12px;padding:12px;margin-top:8px;}}
 QFrame#card{{background:{SURFACE};border:1px solid {BORDER};border-radius:17px;}}
@@ -665,16 +573,13 @@ QLabel#value{{font-size:15pt;font-weight:900;}}
 QComboBox#device{{background:{SURFACE2};border:1px solid {BORDER};border-radius:11px;padding:9px;}}
 QPushButton{{border:0;border-radius:11px;padding:11px 14px;background:{SURFACE2};color:{TEXT};}}
 QPushButton:hover{{background:#183142;}}
-QPushButton#nav{{text-align:right;padding:13px 14px;background:transparent;color:{MUTED};font-weight:700;border:1px solid transparent;border-radius:13px;}}
+QPushButton#nav{{text-align:right;padding:13px 14px;background:transparent;color:{MUTED};font-weight:700;}}
 QPushButton#nav:hover{{background:{SURFACE2};color:{TEXT};}}
 QPushButton#action{{background:{GREEN};color:#03140d;font-weight:900;}}
-QPushButton#tool{{min-height:62px;text-align:right;background:{SURFACE};border:1px solid {BORDER};font-weight:700;border-radius:15px;padding:12px 15px;}}
+QPushButton#tool{{min-height:62px;text-align:right;background:{SURFACE};border:1px solid {BORDER};font-weight:700;}}
 QPushButton#tool:hover{{border:1px solid {GREEN};background:{SURFACE2};}}
 QLineEdit{{background:{SURFACE};border:1px solid {BORDER};border-radius:11px;padding:11px;color:{TEXT};}}
-QTextEdit#console{{background:#050b10;border:1px solid {BORDER};border-radius:16px;padding:14px;color:#b8f5dc;font-family:Consolas,'Vazirmatn';font-size:10pt;selection-background-color:#174b3d;}}
-QCheckBox#simple{{background:transparent;border:0;color:{MUTED};padding:4px;}}
-QCheckBox#simple::indicator{{width:18px;height:18px;border-radius:9px;border:1px solid {BORDER};background:{SURFACE2};}}
-QCheckBox#simple::indicator:checked{{background:{GREEN};border:1px solid {GREEN};}}
+QTextEdit#console{{background:#050b10;border:1px solid {BORDER};border-radius:14px;padding:12px;color:#b8f5dc;font-family:Consolas,'Vazirmatn';font-size:10pt;}}
 QScrollArea{{border:0;background:transparent;}}
 """
 
