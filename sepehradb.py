@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSvgWidgets import QSvgWidget
 
 APP_NAME = "SEPEHR ADB HUB"
-APP_VERSION = "3.0"
+APP_VERSION = "4.0"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LOGGER = logging.getLogger("sepehr_adb_hub")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -98,6 +98,7 @@ class Hub(QMainWindow):
         super().__init__()
         self.adb=adb_path(); self.serial=""; self.runner=None; self.snapshot_runner=None
         self.refreshing=False; self._closing=False; self._last_devices=()
+        self._command_runners=set()
         self.adb_available=bool(self.adb and os.path.isfile(self.adb))
         self.setWindowTitle(f"{APP_NAME}  •  {APP_VERSION}")
         self.resize(1500,920); self.setMinimumSize(1180,760); self.setLayoutDirection(Qt.RightToLeft)
@@ -107,7 +108,7 @@ class Hub(QMainWindow):
             QTimer.singleShot(300,self.show_adb_missing)
         else:
             self.refresh_devices()
-            self.device_timer=QTimer(self); self.device_timer.timeout.connect(self.refresh_devices); self.device_timer.start(3000)
+            self.device_timer=QTimer(self); self.device_timer.timeout.connect(self.refresh_devices); self.device_timer.start(5000)
             self.monitor_timer=QTimer(self); self.monitor_timer.timeout.connect(self.refresh_now); self.monitor_timer.start(8000)
 
     def show_adb_missing(self):
@@ -121,25 +122,69 @@ class Hub(QMainWindow):
         l.addWidget(t); l.addWidget(d); return w
 
     def build(self):
-        root=QWidget(); self.setCentralWidget(root); main=QHBoxLayout(root)
-        main.setContentsMargins(14,14,14,14); main.setSpacing(14)
-        side=QFrame(); side.setObjectName("sidebar"); side.setFixedWidth(260)
-        sl=QVBoxLayout(side); sl.setContentsMargins(18,18,18,18); sl.setSpacing(6)
-        logo=QSvgWidget(resource_path("assets/sepehradb.svg")); logo.setFixedSize(62,62); sl.addWidget(logo,alignment=Qt.AlignRight)
-        brand=QLabel("SEPEHR ADB HUB"); brand.setObjectName("brand"); sl.addWidget(brand)
-        sub=QLabel("Android Control Center"); sub.setObjectName("muted"); sl.addWidget(sub); sl.addSpacing(12)
-        self.device_box=QComboBox(); self.device_box.setObjectName("device"); self.device_box.currentIndexChanged.connect(self.device_changed); sl.addWidget(self.device_box)
-        self.conn=QLabel("●  بررسی ADB…"); self.conn.setObjectName("connection"); sl.addWidget(self.conn); sl.addSpacing(6)
-        self.nav=QStackedWidget(); self.pages={}; self.nav_buttons=[]
-        navs=[("⌂","داشبورد","Dashboard"),("◉","دستگاه","Device"),("◌","مانیتور","Monitor"),
-              ("▦","برنامه‌ها","Apps"),("▤","فایل‌ها","Files"),("⌁","شبکه","Network"),
-              ("⌘","کنترل","Control"),("⚡","عملکرد","Performance"),("☷","لاگ‌کَت","Logcat"),
-              ("⚙","ابزارهای ADB","Tools"),("▣","کنسول","Console")]
-        for icon,label,key in navs:
-            b=QPushButton(f"{icon}   {label}"); b.setObjectName("nav"); b.clicked.connect(lambda _,k=key:self.show_page(k))
-            self.nav_buttons.append(b); sl.addWidget(b)
-        sl.addStretch(); ver=QLabel(f"Windows • v{APP_VERSION}"); ver.setObjectName("muted"); sl.addWidget(ver)
-        main.addWidget(side); main.addWidget(self.nav,1)
+        root=QWidget(); root.setObjectName("appRoot"); self.setCentralWidget(root)
+        main=QHBoxLayout(root); main.setContentsMargins(18,18,18,18); main.setSpacing(16)
+
+        # ── Galaxy sidebar ────────────────────────────────────────────────
+        side=QFrame(); side.setObjectName("sidebar"); side.setFixedWidth(246)
+        sl=QVBoxLayout(side); sl.setContentsMargins(16,18,16,16); sl.setSpacing(8)
+
+        top=QHBoxLayout(); top.setSpacing(10)
+        logo=QSvgWidget(resource_path("assets/sepehradb.svg")); logo.setFixedSize(46,46); top.addWidget(logo)
+        bt=QVBoxLayout(); bt.setSpacing(0)
+        brand=QLabel("SEPEHR"); brand.setObjectName("brand")
+        hub=QLabel("ADB HUB  /  CONTROL"); hub.setObjectName("brandSub")
+        bt.addWidget(brand); bt.addWidget(hub); top.addLayout(bt,1); sl.addLayout(top)
+        sl.addSpacing(10)
+
+        self.device_box=QComboBox(); self.device_box.setObjectName("device")
+        self.device_box.currentIndexChanged.connect(self.device_changed); sl.addWidget(self.device_box)
+        self.conn=QLabel("●  بررسی اتصال…"); self.conn.setObjectName("connection"); sl.addWidget(self.conn)
+        sl.addSpacing(8)
+
+        navs=[
+            ("OVERVIEW","⌂","داشبورد","Dashboard"),
+            ("DEVICE","◉","دستگاه","Device"),
+            ("MONITOR","◌","مانیتور","Monitor"),
+            ("APPS","▦","برنامه‌ها","Apps"),
+            ("FILES","▤","فایل‌ها","Files"),
+            ("NETWORK","⌁","شبکه","Network"),
+            ("CONTROL","⌘","کنترل","Control"),
+            ("PERFORMANCE","ϟ","عملکرد","Performance"),
+            ("LOGS","☷","لاگ‌کَت","Logcat"),
+            ("TOOLS","⚙","ابزارها","Tools"),
+            ("CONSOLE","▣","کنسول","Console")
+        ]
+        self.nav_buttons=[]; self.nav_groups=[]
+        for group,icon,label,key in navs:
+            b=QPushButton(); b.setObjectName("nav")
+            b.setText(f"  {icon}    {label}")
+            b.setToolTip(f"{group}  •  {label}")
+            b.clicked.connect(lambda _,k=key:self.show_page(k))
+            self.nav_buttons.append((key,b)); sl.addWidget(b)
+
+        sl.addStretch()
+        foot=QFrame(); foot.setObjectName("sideFoot"); fl=QVBoxLayout(foot); fl.setContentsMargins(12,10,12,10)
+        fl.addWidget(QLabel("ANDROID TOOLKIT",objectName="sideMini"))
+        v=QLabel(f"Windows  •  v{APP_VERSION}"); v.setObjectName("muted"); fl.addWidget(v)
+        sl.addWidget(foot)
+        main.addWidget(side)
+
+        # ── Main shell ────────────────────────────────────────────────────
+        shell=QFrame(); shell.setObjectName("shell")
+        sh=QVBoxLayout(shell); sh.setContentsMargins(20,18,20,20); sh.setSpacing(14)
+        bar=QFrame(); bar.setObjectName("topbar"); bl=QHBoxLayout(bar); bl.setContentsMargins(16,12,16,12)
+        self.page_kicker=QLabel("OVERVIEW"); self.page_kicker.setObjectName("kicker")
+        self.page_title=QLabel("داشبورد"); self.page_title.setObjectName("topTitle")
+        titleBox=QVBoxLayout(); titleBox.setSpacing(0); titleBox.addWidget(self.page_kicker); titleBox.addWidget(self.page_title)
+        bl.addLayout(titleBox); bl.addStretch()
+        self.top_device=QLabel("NO DEVICE"); self.top_device.setObjectName("topDevice"); bl.addWidget(self.top_device)
+        sh.addWidget(bar)
+
+        self.nav=QStackedWidget(); self.pages={}
+        sh.addWidget(self.nav,1)
+        main.addWidget(shell,1)
+
         self.add_page("Dashboard",self.dashboard_page()); self.add_page("Device",self.device_page())
         self.add_page("Monitor",self.monitor_page()); self.add_page("Apps",self.apps_page())
         self.add_page("Files",self.files_page()); self.add_page("Network",self.network_page())
@@ -147,143 +192,194 @@ class Hub(QMainWindow):
         self.add_page("Logcat",self.logcat_page()); self.add_page("Tools",self.tools_page()); self.add_page("Console",self.console_page())
         self.show_page("Dashboard")
 
-    def add_page(self,key,w): self.pages[key]=w; self.nav.addWidget(w)
-    def show_page(self,key): self.nav.setCurrentWidget(self.pages[key])
+    def add_page(self,key,w):
+        self.pages[key]=w; self.nav.addWidget(w)
+
+    def show_page(self,key):
+        if key not in self.pages:return
+        self.nav.setCurrentWidget(self.pages[key])
+        titles={
+            "Dashboard":("OVERVIEW","داشبورد"),"Device":("DEVICE","Device Inspector"),
+            "Monitor":("MONITOR","Live Monitor"),"Apps":("APPS","App Manager"),
+            "Files":("FILES","File Manager"),"Network":("NETWORK","Network Lab"),
+            "Control":("CONTROL","Device Control"),"Performance":("PERFORMANCE","Performance Lab"),
+            "Logcat":("LOGS","Professional Logcat"),"Tools":("TOOLS","ADB Toolkit"),
+            "Console":("CONSOLE","ADB Console")
+        }
+        k,t=titles.get(key,(key,key)); self.page_kicker.setText(k); self.page_title.setText(t)
+        for page,b in self.nav_buttons:
+            b.setProperty("active",page==key); b.style().unpolish(b); b.style().polish(b)
+
+    def header(self,title,desc):
+        w=QFrame(); w.setObjectName("pageHeader")
+        l=QVBoxLayout(w); l.setContentsMargins(0,0,0,10); l.setSpacing(3)
+        t=QLabel(title); t.setObjectName("sectionTitle"); d=QLabel(desc); d.setObjectName("muted")
+        l.addWidget(t); l.addWidget(d); return w
+
+    def section(self,title,tag=""):
+        w=QFrame(); w.setObjectName("section")
+        l=QVBoxLayout(w); l.setContentsMargins(16,14,16,16); l.setSpacing(10)
+        row=QHBoxLayout(); a=QLabel(title); a.setObjectName("sectionLabel"); row.addWidget(a)
+        row.addStretch()
+        if tag:
+            z=QLabel(tag); z.setObjectName("pill"); row.addWidget(z)
+        l.addLayout(row)
+        return w,l
 
     def dashboard_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("داشبورد","کنترل سریع، سلامت دستگاه و وضعیت ADB"))
-        self.cards={}; g=QGridLayout(); g.setSpacing(12)
-        for i,(t,k,c) in enumerate([("دستگاه","model",GREEN),("Android","android",BLUE),("باتری","level",GREEN),("دما","temp",GOLD),
-                                    ("RAM","ram",BLUE),("SDK","sdk",GOLD),("سازنده","manufacturer",PURPLE),("Serial","serial",BLUE)]):
-            c1=StatCard(t,"—",c); self.cards[k]=c1.value; g.addWidget(c1,i//4,i%4)
-        l.addLayout(g); l.addSpacing(12)
-        quick=[("📸 اسکرین‌شات",self.screenshot),("🎥 ضبط صفحه",self.record),("🖥 scrcpy",self.scrcpy),
-               ("📱 اطلاعات",lambda:self.show_page("Device")),("📦 برنامه‌ها",lambda:self.show_page("Apps")),
-               ("📂 فایل‌ها",lambda:self.show_page("Files")),("📡 شبکه",lambda:self.show_page("Network")),
-               ("⚡ سلامت",lambda:self.show_page("Performance"))]
-        grid=QGridLayout()
-        for i,(txt,fn) in enumerate(quick):
-            b=QPushButton(txt); b.setObjectName("action" if i<4 else "tool"); b.clicked.connect(fn); grid.addWidget(b,i//4,i%4)
-        l.addLayout(grid); self.health=QLabel("●  منتظر دستگاه…"); self.health.setObjectName("status"); l.addWidget(self.health)
+        w=QWidget(); l=QVBoxLayout(w); l.setContentsMargins(2,2,2,2); l.setSpacing(14)
+        hero=QFrame(); hero.setObjectName("hero"); hl=QHBoxLayout(hero); hl.setContentsMargins(22,20,22,20)
+        htxt=QVBoxLayout(); h1=QLabel("Android control, reimagined."); h1.setObjectName("heroTitle")
+        h2=QLabel("یک مرکز کنترل سریع، تمیز و حرفه‌ای برای ADB — بدون شلوغی اضافه."); h2.setObjectName("heroSub")
+        htxt.addWidget(h1); htxt.addWidget(h2); hl.addLayout(htxt,1)
+        self.health=QLabel("●  منتظر دستگاه…"); self.health.setObjectName("heroStatus"); hl.addWidget(self.health)
+        l.addWidget(hero)
+
+        self.cards={}; grid=QGridLayout(); grid.setSpacing(10)
+        stats=[("DEVICE","model",GREEN),("ANDROID","android",BLUE),("BATTERY","level",GREEN),("THERMAL","temp",GOLD),
+               ("MEMORY","ram",BLUE),("SDK","sdk",GOLD),("VENDOR","manufacturer",PURPLE),("SERIAL","serial",BLUE)]
+        for i,(t,k,c) in enumerate(stats):
+            card=StatCard(t,"—",c); card.setObjectName("metric"); self.cards[k]=card.value; grid.addWidget(card,i//4,i%4)
+        l.addLayout(grid)
+
+        sec,sl=self.section("Quick Actions","READY")
+        actions=[("📸","Screenshot",self.screenshot),("🎥","Screen Record",self.record),("🖥","scrcpy",self.scrcpy),
+                 ("◉","Device Inspector",lambda:self.show_page("Device")),("▦","App Manager",lambda:self.show_page("Apps")),
+                 ("▤","File Manager",lambda:self.show_page("Files")),("⌁","Network Lab",lambda:self.show_page("Network")),
+                 ("ϟ","Performance",lambda:self.show_page("Performance"))]
+        q=QGridLayout(); q.setSpacing(8)
+        for i,(ic,txt,fn) in enumerate(actions):
+            b=QPushButton(f"{ic}  {txt}"); b.setObjectName("quick" if i<3 else "tool"); b.clicked.connect(fn); q.addWidget(b,i//4,i%4)
+        sl.addLayout(q); l.addWidget(sec)
         l.addStretch(); return w
 
     def device_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Device Inspector","اطلاعات ساختاریافته دستگاه، سیستم، سخت‌افزار و نمایشگر"))
-        self.info=QTextEdit(); self.info.setReadOnly(True); self.info.setObjectName("console"); l.addWidget(self.info)
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Device Inspector","مشخصات ساختاریافته دستگاه، سیستم، سخت‌افزار و نمایشگر"))
+        sec,sl=self.section("System Snapshot","READ ONLY")
+        self.info=QTextEdit(); self.info.setReadOnly(True); self.info.setObjectName("console"); sl.addWidget(self.info,1)
         row=QHBoxLayout()
         for txt,args in [("Getprop",["shell","getprop"]),("Build",["shell","getprop","ro.build.fingerprint"]),
                          ("Kernel",["shell","uname","-a"]),("ABI",["shell","getprop","ro.product.cpu.abilist"])]:
-            b=QPushButton(txt); b.clicked.connect(lambda _,a=args:self.run(a,20)); row.addWidget(b)
-        l.addLayout(row); return w
+            b=QPushButton(txt); b.setObjectName("tool"); b.clicked.connect(lambda _,a=args:self.run(a,20)); row.addWidget(b)
+        sl.addLayout(row); l.addWidget(sec); return w
 
     def monitor_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Live Monitor","پایش سبک و خودکار؛ تشخیص‌های سنگین فقط هنگام درخواست اجرا می‌شوند"))
-        self.monitor=QTextEdit(); self.monitor.setReadOnly(True); self.monitor.setObjectName("console"); l.addWidget(self.monitor)
-        return w
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Live Monitor","پایش سبک و خودکار؛ داده‌های سنگین فقط هنگام درخواست"))
+        sec,sl=self.section("Live telemetry","AUTO • 8s")
+        self.monitor=QTextEdit(); self.monitor.setReadOnly(True); self.monitor.setObjectName("console"); sl.addWidget(self.monitor,1)
+        l.addWidget(sec); return w
 
     def apps_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("App Manager","نصب، حذف، اجرا، توقف، پاک‌سازی و بررسی برنامه‌های Android"))
-        top=QHBoxLayout(); self.app_filter=QLineEdit(); self.app_filter.setPlaceholderText("فیلتر package…")
-        for txt,fn in [("🔄 بارگذاری",self.load_apps),("➕ نصب APK",self.install_apk),("🗑 حذف",self.uninstall_app)]:
-            b=QPushButton(txt); b.setObjectName("action" if txt=="➕ نصب APK" else "tool"); b.clicked.connect(fn); top.addWidget(b)
-        top.insertWidget(0,self.app_filter,1); l.addLayout(top)
-        self.apps_table=QTableWidget(0,2); self.apps_table.setHorizontalHeaderLabels(["Package","وضعیت"]); self.apps_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch); self.apps_table.setSelectionBehavior(QTableWidget.SelectRows); l.addWidget(self.apps_table)
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("App Manager","مدیریت نصب، حذف، اجرا، توقف و پاک‌سازی برنامه‌های Android"))
+        bar=QFrame(); bar.setObjectName("section"); bl=QHBoxLayout(bar); bl.setContentsMargins(12,10,12,10)
+        self.app_filter=QLineEdit(); self.app_filter.setPlaceholderText("جستجوی package…")
+        bl.addWidget(self.app_filter,1)
+        for txt,fn in [("↻ بارگذاری",self.load_apps),("＋ نصب APK",self.install_apk),("⌫ حذف",self.uninstall_app)]:
+            b=QPushButton(txt); b.setObjectName("quick" if "نصب" in txt else "tool"); b.clicked.connect(fn); bl.addWidget(b)
+        l.addWidget(bar)
+        self.apps_table=QTableWidget(0,2); self.apps_table.setHorizontalHeaderLabels(["PACKAGE","APK PATH"])
+        self.apps_table.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
+        self.apps_table.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeToContents)
+        self.apps_table.setSelectionBehavior(QTableWidget.SelectRows); self.apps_table.setAlternatingRowColors(True); l.addWidget(self.apps_table,1)
         row=QHBoxLayout()
-        for txt,fn in [("▶ اجرا",self.launch_app),("⏹ Force Stop",self.force_stop_app),("🧹 پاک‌سازی داده",self.clear_app),("📤 خروجی APK",self.export_apk)]:
-            b=QPushButton(txt); b.clicked.connect(fn); row.addWidget(b)
+        for txt,fn in [("▶ اجرا",self.launch_app),("⏹ Force Stop",self.force_stop_app),("🧹 Clear Data",self.clear_app),("📤 Export APK",self.export_apk)]:
+            b=QPushButton(txt); b.setObjectName("tool"); b.clicked.connect(fn); row.addWidget(b)
         l.addLayout(row); return w
 
     def files_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("File Manager","انتقال فایل بین Windows و دستگاه با pull / push / حذف"))
-        row=QHBoxLayout(); self.remote_path=QLineEdit("/sdcard/"); self.remote_path.setPlaceholderText("مسیر روی دستگاه")
-        for txt,fn in [("📥 Pull",self.pull_file),("📤 Push",self.push_file),("🗑 Delete",self.delete_remote),("📁 Refresh",self.list_remote)]:
-            b=QPushButton(txt); b.clicked.connect(fn); row.addWidget(b)
-        row.insertWidget(0,self.remote_path,1); l.addLayout(row)
-        self.files_out=QTextEdit(); self.files_out.setReadOnly(True); self.files_out.setObjectName("console"); l.addWidget(self.files_out)
-        return w
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("File Manager","انتقال فایل بین Windows و Android با pull / push / delete"))
+        sec,sl=self.section("Remote path","ADB FILE I/O")
+        row=QHBoxLayout(); self.remote_path=QLineEdit("/sdcard/"); self.remote_path.setPlaceholderText("/sdcard/")
+        for txt,fn in [("📁 List",self.list_remote),("📥 Pull",self.pull_file),("📤 Push",self.push_file),("⌫ Delete",self.delete_remote)]:
+            b=QPushButton(txt); b.setObjectName("tool"); b.clicked.connect(fn); row.addWidget(b)
+        row.insertWidget(0,self.remote_path,1); sl.addLayout(row)
+        self.files_out=QTextEdit(); self.files_out.setReadOnly(True); self.files_out.setObjectName("console"); sl.addWidget(self.files_out,1)
+        l.addWidget(sec); return w
 
     def network_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Network Lab","Wi‑Fi، IP، DNS، route، sockets، port forwarding و Wireless ADB"))
-        grid=QGridLayout()
-        actions=[("📡 Wi‑Fi",["shell","dumpsys","wifi"]),("🌐 IP",["shell","ip","addr"]),("🧭 Route",["shell","ip","route"]),
-                 ("🔌 Connectivity",["shell","dumpsys","connectivity"]),("🔎 Sockets",["shell","cat","/proc/net/tcp"]),
-                 ("📊 Network Stats",["shell","cat","/proc/net/dev"]),("🧹 ADB Disconnect",["disconnect"])]
-        for i,(t,a) in enumerate(actions):
-            b=QPushButton(t); b.setObjectName("tool"); b.clicked.connect(lambda _,x=a:self.run(x,25)); grid.addWidget(b,i//3,i%3)
-        l.addLayout(grid)
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Network Lab","Wi‑Fi، IP، route، sockets، forwarding و Wireless ADB"))
+        sec,sl=self.section("Diagnostics","ADB NETWORK")
+        grid=QGridLayout(); acts=[("📡 Wi‑Fi",["shell","dumpsys","wifi"]),("🌐 IP",["shell","ip","addr"]),("🧭 Route",["shell","ip","route"]),
+          ("🔌 Connectivity",["shell","dumpsys","connectivity"]),("🔎 Sockets",["shell","cat","/proc/net/tcp"]),("📊 Net Stats",["shell","cat","/proc/net/dev"]),
+          ("🧹 ADB Disconnect",["disconnect"])]
+        for i,(t,a) in enumerate(acts):
+            b=QPushButton(t); b.setObjectName("tool"); b.clicked.connect(lambda _,x=a:self.run(x,25,output="network")); grid.addWidget(b,i//3,i%3)
+        sl.addLayout(grid)
         fw=QHBoxLayout(); self.forward_local=QSpinBox(); self.forward_local.setRange(1,65535); self.forward_local.setValue(8000)
         self.forward_remote=QSpinBox(); self.forward_remote.setRange(1,65535); self.forward_remote.setValue(8000)
-        for t,widget in [("Local",self.forward_local),("Remote",self.forward_remote)]: fw.addWidget(QLabel(t)); fw.addWidget(widget)
-        for txt,fn in [("↔ Forward",self.add_forward),("↔ Reverse",self.add_reverse),("✕ Remove Forward",self.remove_forward)]:
-            b=QPushButton(txt); b.clicked.connect(fn); fw.addWidget(b)
-        l.addLayout(fw)
-        wa=QHBoxLayout(); self.wireless_host=QLineEdit(); self.wireless_host.setPlaceholderText("IP:PORT  مثال 192.168.1.20:5555")
-        for txt,fn in [("🔗 Connect",self.wireless_connect),("✕ Disconnect",self.wireless_disconnect),("🛠 Restart Server",self.restart_server)]:
-            b=QPushButton(txt); b.clicked.connect(fn); wa.addWidget(b)
-        wa.insertWidget(0,self.wireless_host,1); l.addLayout(wa)
-        self.network_out=QTextEdit(); self.network_out.setReadOnly(True); self.network_out.setObjectName("console"); l.addWidget(self.network_out); return w
+        for t,z in [("LOCAL",self.forward_local),("REMOTE",self.forward_remote)]: fw.addWidget(QLabel(t)); fw.addWidget(z)
+        for txt,fn in [("↔ Forward",self.add_forward),("↔ Reverse",self.add_reverse),("✕ Remove",self.remove_forward)]:
+            b=QPushButton(txt); b.setObjectName("tool"); b.clicked.connect(fn); fw.addWidget(b)
+        sl.addLayout(fw)
+        wa=QHBoxLayout(); self.wireless_host=QLineEdit(); self.wireless_host.setPlaceholderText("IP:PORT  •  مثال 192.168.1.20:5555")
+        for txt,fn in [("🔗 Connect",self.wireless_connect),("✕ Disconnect",self.wireless_disconnect),("↻ Restart Server",self.restart_server)]:
+            b=QPushButton(txt); b.setObjectName("tool"); b.clicked.connect(fn); wa.addWidget(b)
+        wa.insertWidget(0,self.wireless_host,1); sl.addLayout(wa)
+        self.network_out=QTextEdit(); self.network_out.setReadOnly(True); self.network_out.setObjectName("console"); sl.addWidget(self.network_out,1)
+        l.addWidget(sec); return w
 
     def control_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Device Control","ورودی، کلیدها، متن، ناوبری و کنترل صفحه"))
-        g=QGridLayout()
-        controls=[("⌂ Home",["shell","input","keyevent","KEYCODE_HOME"]),("◀ Back",["shell","input","keyevent","KEYCODE_BACK"]),
-                  ("▣ Recent",["shell","input","keyevent","KEYCODE_APP_SWITCH"]),("🔒 Power",["shell","input","keyevent","KEYCODE_POWER"]),
-                  ("🔊 Vol+",["shell","input","keyevent","KEYCODE_VOLUME_UP"]),("🔉 Vol-",["shell","input","keyevent","KEYCODE_VOLUME_DOWN"]),
-                  ("☀ Wake",["shell","input","keyevent","KEYCODE_WAKEUP"]),("🔄 Reboot",["reboot"])]
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Device Control","ناوبری، کلیدها، متن و لمس — اجرای مستقیم روی دستگاه انتخاب‌شده"))
+        sec,sl=self.section("Navigation & power","DEVICE INPUT")
+        g=QGridLayout(); controls=[("⌂ Home",["shell","input","keyevent","KEYCODE_HOME"]),("◀ Back",["shell","input","keyevent","KEYCODE_BACK"]),
+          ("▣ Recent",["shell","input","keyevent","KEYCODE_APP_SWITCH"]),("🔒 Power",["shell","input","keyevent","KEYCODE_POWER"]),
+          ("🔊 Vol+",["shell","input","keyevent","KEYCODE_VOLUME_UP"]),("🔉 Vol-",["shell","input","keyevent","KEYCODE_VOLUME_DOWN"]),
+          ("☀ Wake",["shell","input","keyevent","KEYCODE_WAKEUP"]),("🔄 Reboot",["reboot"])]
         for i,(t,a) in enumerate(controls):
-            b=QPushButton(t); b.clicked.connect(lambda _,x=a:self.control_action(x)); g.addWidget(b,i//4,i%4)
-        l.addLayout(g)
+            b=QPushButton(t); b.setObjectName("tool"); b.clicked.connect(lambda _,x=a:self.control_action(x)); g.addWidget(b,i//4,i%4)
+        sl.addLayout(g)
         form=QHBoxLayout(); self.text_input=QLineEdit(); self.text_input.setPlaceholderText("متن برای input text…")
-        send=QPushButton("⌨ ارسال متن"); send.clicked.connect(self.send_text); form.addWidget(self.text_input,1); form.addWidget(send)
-        l.addLayout(form)
-        touch=QHBoxLayout()
-        self.tap_x=QSpinBox(); self.tap_x.setRange(0,10000); self.tap_y=QSpinBox(); self.tap_y.setRange(0,10000)
-        for q in (self.tap_x,self.tap_y): touch.addWidget(q)
-        tap=QPushButton("👆 Tap"); tap.clicked.connect(lambda:self.run(["shell","input","tap",str(self.tap_x.value()),str(self.tap_y.value())],10))
-        touch.addWidget(tap); l.addLayout(touch)
-        self.control_out=QTextEdit(); self.control_out.setReadOnly(True); self.control_out.setObjectName("console"); l.addWidget(self.control_out); return w
+        send=QPushButton("⌨ ارسال متن"); send.setObjectName("quick"); send.clicked.connect(self.send_text); form.addWidget(self.text_input,1); form.addWidget(send); sl.addLayout(form)
+        touch=QHBoxLayout(); self.tap_x=QSpinBox(); self.tap_x.setRange(0,10000); self.tap_y=QSpinBox(); self.tap_y.setRange(0,10000)
+        touch.addWidget(QLabel("X")); touch.addWidget(self.tap_x); touch.addWidget(QLabel("Y")); touch.addWidget(self.tap_y)
+        tap=QPushButton("👆 Tap"); tap.setObjectName("quick"); tap.clicked.connect(lambda:self.run(["shell","input","tap",str(self.tap_x.value()),str(self.tap_y.value())],10,output="control")); touch.addWidget(tap); sl.addLayout(touch)
+        self.control_out=QTextEdit(); self.control_out.setReadOnly(True); self.control_out.setObjectName("console"); sl.addWidget(self.control_out,1)
+        l.addWidget(sec); return w
 
     def performance_page(self):
         w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Performance & Battery Lab","CPU، RAM، حرارت، باتری، فریم‌ها و سرویس‌های سیستمی"))
-        g=QGridLayout()
-        acts=[("⚡ CPU",["shell","dumpsys","cpuinfo"]),("🧠 RAM",["shell","dumpsys","meminfo"]),("🌡 Thermal",["shell","dumpsys","thermalservice"]),
-              ("🔋 Battery",["shell","dumpsys","battery"]),("🎞 SurfaceFlinger",["shell","dumpsys","SurfaceFlinger"]),("🖥 GFX",["shell","dumpsys","gfxinfo"]),
-              ("💾 Storage",["shell","df","-h"]),("⏱ Boot",["shell","getprop","ro.boot.boottime"])]
+        sec,sl=self.section("Diagnostics","ON DEMAND")
+        g=QGridLayout(); acts=[("ϟ CPU",["shell","dumpsys","cpuinfo"]),("🧠 RAM",["shell","dumpsys","meminfo"]),("🌡 Thermal",["shell","dumpsys","thermalservice"]),
+          ("🔋 Battery",["shell","dumpsys","battery"]),("🎞 SurfaceFlinger",["shell","dumpsys","SurfaceFlinger"]),("🖥 GFX",["shell","dumpsys","gfxinfo"]),
+          ("💾 Storage",["shell","df","-h"]),("⏱ Boot",["shell","getprop","ro.boot.boottime"])]
         for i,(t,a) in enumerate(acts):
-            b=QPushButton(t); b.setObjectName("tool"); b.clicked.connect(lambda _,x=a:self.run(x,35)); g.addWidget(b,i//4,i%4)
-        l.addLayout(g); self.perf_out=QTextEdit(); self.perf_out.setReadOnly(True); self.perf_out.setObjectName("console"); l.addWidget(self.perf_out); return w
+            b=QPushButton(t); b.setObjectName("tool"); b.clicked.connect(lambda _,x=a:self.run(x,35,output="perf")); g.addWidget(b,i//4,i%4)
+        sl.addLayout(g); self.perf_out=QTextEdit(); self.perf_out.setReadOnly(True); self.perf_out.setObjectName("console"); sl.addWidget(self.perf_out,1)
+        l.addWidget(sec); return w
 
     def logcat_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Professional Logcat","فیلتر، level، PID، پاک‌سازی، ذخیره و مشاهده زنده"))
-        row=QHBoxLayout(); self.log_filter=QLineEdit(); self.log_filter.setPlaceholderText("فیلتر متن یا package/PID")
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Professional Logcat","Live stream با فیلتر امن، توقف، پاک‌سازی و ذخیره خروجی"))
+        bar=QFrame(); bar.setObjectName("section"); bl=QHBoxLayout(bar); bl.setContentsMargins(12,10,12,10)
+        self.log_filter=QLineEdit(); self.log_filter.setPlaceholderText("فیلتر متن / package / PID")
         self.log_level=QComboBox(); self.log_level.addItems(["همه","*:V","*:D","*:I","*:W","*:E","*:F"])
         for txt,fn in [("▶ Live",self.logcat_live),("⏸ Pause",self.stop_logcat),("🧹 Clear",self.logcat_clear),("📥 Save",self.save_logcat)]:
-            b=QPushButton(txt); b.clicked.connect(fn); row.addWidget(b)
-        row.insertWidget(0,self.log_filter,1); row.insertWidget(1,self.log_level); l.addLayout(row)
-        self.log_out=QTextEdit(); self.log_out.setReadOnly(True); self.log_out.setObjectName("console"); l.addWidget(self.log_out)
-        self.log_thread=None; return w
+            b=QPushButton(txt); b.setObjectName("quick" if "Live" in txt else "tool"); b.clicked.connect(fn); bl.addWidget(b)
+        bl.insertWidget(0,self.log_filter,1); bl.insertWidget(1,self.log_level); l.addWidget(bar)
+        self.log_out=QTextEdit(); self.log_out.setReadOnly(True); self.log_out.setObjectName("console"); l.addWidget(self.log_out,1)
+        self.log_thread=None; self.log_queue=[]; self.log_lock=threading.Lock()
+        self.log_timer=QTimer(self); self.log_timer.timeout.connect(self.flush_log_queue); self.log_timer.start(100)
+        return w
 
     def tools_page(self):
         w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("ADB Toolkit","دسترسی مستقیم به قابلیت‌های حرفه‌ای ADB و Android shell"))
-        scroll=QScrollArea(); scroll.setWidgetResizable(True); box=QWidget(); g=QGridLayout(box)
+        scroll=QScrollArea(); scroll.setWidgetResizable(True); box=QWidget(); g=QGridLayout(box); g.setSpacing(10)
         acts=[("📦 install-multiple",["install-multiple"]),("🧬 Getprop",["shell","getprop"]),("🕵 Dumpsys",["shell","dumpsys"]),
-              ("📋 Services",["shell","service","list"]),("⚙ Settings",["shell","settings","list","system"]),("🧩 cmd",["shell","cmd","-l"]),
-              ("👀 Activity Top",["shell","dumpsys","activity","top"]),("🧱 UI Dump",["shell","uiautomator","dump","/sdcard/window.xml"]),
-              ("📱 Display",["shell","dumpsys","display"]),("🔋 Battery",["shell","dumpsys","batterystats"]),
-              ("📝 Logcat Dump",["logcat","-d"]),("🔄 Reboot",["reboot"]),("🔑 Recovery",["reboot","recovery"]),
-              ("🔧 Bootloader",["reboot","bootloader"]),("♻ Kill Server",["kill-server"]),("▶ Start Server",["start-server"]),
-              ("👆 Getevent",["shell","getevent","-lt"]),("💻 ADB Shell",["shell"])]
+          ("📋 Services",["shell","service","list"]),("⚙ Settings",["shell","settings","list","system"]),("🧩 cmd",["shell","cmd","-l"]),
+          ("👀 Activity Top",["shell","dumpsys","activity","top"]),("🧱 UI Dump",["shell","uiautomator","dump","/sdcard/window.xml"]),
+          ("📱 Display",["shell","dumpsys","display"]),("🔋 Battery Stats",["shell","dumpsys","batterystats"]),("📝 Logcat Dump",["logcat","-d"]),
+          ("🔄 Reboot",["reboot"]),("🔑 Recovery",["reboot","recovery"]),("🔧 Bootloader",["reboot","bootloader"]),
+          ("♻ Kill Server",["kill-server"]),("▶ Start Server",["start-server"]),("👆 Getevent",["shell","getevent","-lt"]),("💻 ADB Shell",["shell"])]
         for i,(t,a) in enumerate(acts):
             b=QPushButton(t); b.setObjectName("tool"); b.clicked.connect(lambda _,x=a:self.tool_action(x)); g.addWidget(b,i//3,i%3)
-        scroll.setWidget(box); l.addWidget(scroll); return w
+        scroll.setWidget(box); l.addWidget(scroll,1); return w
 
     def console_page(self):
-        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("Console","اجرای مستقیم هر دستور ADB؛ خروجی خام برای کاربران حرفه‌ای"))
-        self.out=QTextEdit(); self.out.setReadOnly(True); self.out.setObjectName("console"); l.addWidget(self.out)
+        w=QWidget(); l=QVBoxLayout(w); l.addWidget(self.header("ADB Console","اجرای مستقیم دستورهای ADB با خروجی خام و فنی"))
+        self.out=QTextEdit(); self.out.setReadOnly(True); self.out.setObjectName("console"); l.addWidget(self.out,1)
         row=QHBoxLayout(); self.cmd_box=QLineEdit(); self.cmd_box.setPlaceholderText("مثال: shell dumpsys battery")
-        go=QPushButton("▶ اجرا"); go.setObjectName("action"); go.clicked.connect(self.custom_command)
-        clear=QPushButton("پاک کردن"); clear.clicked.connect(self.out.clear); row.addWidget(self.cmd_box,1); row.addWidget(go); row.addWidget(clear); l.addLayout(row)
-        return w
+        go=QPushButton("▶ اجرا"); go.setObjectName("quick"); go.clicked.connect(self.custom_command)
+        clear=QPushButton("پاک کردن"); clear.clicked.connect(self.out.clear)
+        row.addWidget(self.cmd_box,1); row.addWidget(go); row.addWidget(clear); l.addLayout(row); return w
 
     def refresh_devices(self):
         if not self.adb_available:return
@@ -297,11 +393,13 @@ class Hub(QMainWindow):
         if old in devices:self.device_box.setCurrentText(old)
         elif devices:self.serial=devices[0]; self.device_box.setCurrentText(self.serial)
         else:self.serial=""
+        self.top_device.setText(self.serial if self.serial else "NO DEVICE")
         self.device_box.blockSignals(False)
         if not devices:
             self.conn.setText("●  هیچ دستگاهی متصل نیست"); self.conn.setStyleSheet(f"color:{RED};")
             self.health.setText("●  دستگاهی برای پایش وجود ندارد"); self.health.setStyleSheet(f"color:{RED};"); return
-        self.conn.setText(f"●  ADB آنلاین • {len(devices)} دستگاه"); self.conn.setStyleSheet(f"color:{GREEN};")
+        self.conn.setText(f"●  ADB ONLINE  •  {len(devices)} DEVICE{"S" if len(devices)!=1 else ""}")
+        self.top_device.setText(self.serial if self.serial else "NO DEVICE"); self.conn.setStyleSheet(f"color:{GREEN};")
         if changed:self.refresh_now()
 
     def device_changed(self,index):
@@ -334,22 +432,28 @@ class Hub(QMainWindow):
         if not self.serial:QMessageBox.warning(self,"ADB","ابتدا یک دستگاه متصل انتخاب کن."); return False
         return True
 
-    def run(self,args,timeout=25,target=None,output="console"):
-        if not self.ensure():return False
-        runner=CommandRunner(self.adb,(["-s",target] if target else self.target())+args,timeout); self.runner=runner
+    def run(self,args,timeout=25,target=None,output="console",require_device=True):
+        if not self.adb_available:
+            self.show_adb_missing(); return False
+        if require_device and not self.serial:
+            QMessageBox.warning(self,"ADB","ابتدا یک دستگاه متصل انتخاب کن."); return False
+        prefix=["-s",target or self.serial] if (target or (require_device and self.serial)) else []
+        runner=CommandRunner(self.adb,prefix+args,timeout); self._command_runners.add(runner)
         def done(text,r=runner):
             if self._closing:return
-            if output=="network":self.network_out.setPlainText(text);self.show_page("Network")
-            elif output=="control":self.control_out.setPlainText(text);self.show_page("Control")
-            elif output=="perf":self.perf_out.setPlainText(text);self.show_page("Performance")
-            else:self.out.setPlainText(text);self.show_page("Console")
-            if self.runner is r:self.runner=None
-        runner.done.connect(done); runner.finished.connect(runner.deleteLater); runner.start(); return True
+            if output=="network":self.network_out.setPlainText(text)
+            elif output=="control":self.control_out.setPlainText(text)
+            elif output=="perf":self.perf_out.setPlainText(text)
+            else:self.out.setPlainText(text)
+        def finished(r=runner):
+            self._command_runners.discard(r); r.deleteLater()
+        runner.done.connect(done); runner.finished.connect(finished); runner.start(); return True
 
     def tool_action(self,args):
         if args==["shell"] or args==["shell","getevent","-lt"]:
-            if not self.ensure():return
-            try: subprocess.Popen(["cmd.exe","/k",self.adb,*self.target(),*args],creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            if not self.adb_available:return self.show_adb_missing()
+            if not self.serial: QMessageBox.warning(self,"ADB","ابتدا یک دستگاه متصل انتخاب کن."); return
+            try: subprocess.Popen(["cmd.exe","/k",self.adb,*self.target(),*args])
             except OSError as e:QMessageBox.warning(self,"ADB Shell",str(e))
             return
         if args in (["reboot"],["reboot","recovery"],["reboot","bootloader"]):
@@ -439,7 +543,7 @@ class Hub(QMainWindow):
         self.run(["disconnect"]+([host] if host else []),15,output="network")
 
     def restart_server(self):
-        self.run(["kill-server"],15,output="network"); QTimer.singleShot(1200,lambda:self.run(["start-server"],20,output="network"))
+        self.run(["kill-server"],15,output="network",require_device=False); QTimer.singleShot(1200,lambda:self.run(["start-server"],20,output="network",require_device=False))
 
     def add_forward(self):
         self.run(["forward",f"tcp:{self.forward_local.value()}",f"tcp:{self.forward_remote.value()}"],15,output="network")
@@ -467,7 +571,8 @@ class Hub(QMainWindow):
                 line=self.log_thread.stdout.readline()
                 if not line:break
                 if not filt or filt.lower() in line.lower():
-                    QTimer.singleShot(0,lambda s=line:self.log_out.append(s.rstrip()))
+                    with self.log_lock:
+                        self.log_queue.append(line.rstrip())
         threading.Thread(target=read,daemon=True).start()
 
     def stop_logcat(self):
@@ -476,6 +581,12 @@ class Hub(QMainWindow):
             try:p.terminate()
             except:pass
         self.log_thread=None
+
+    def flush_log_queue(self):
+        if self._closing:return
+        with self.log_lock:
+            batch=self.log_queue[:250]; del self.log_queue[:250]
+        if batch:self.log_out.append("\n".join(batch))
 
     def logcat_clear(self):
         if self.ensure():self.run(["logcat","-c"],15)
@@ -490,7 +601,7 @@ class Hub(QMainWindow):
         p,_=QFileDialog.getSaveFileName(self,"ذخیره اسکرین‌شات","sepehradb-screenshot.png","PNG (*.png)")
         if not p:return
         try:
-            r=subprocess.run([self.adb,*self.target(),"exec-out","screencap","-p"],capture_output=True,timeout=20)
+            r=subprocess.run([self.adb,*self.target(),"exec-out","screencap","-p"],capture_output=True,timeout=20,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
             if r.returncode==0 and r.stdout:Path(p).write_bytes(r.stdout);QMessageBox.information(self,"اسکرین‌شات","ذخیره شد.")
             else:QMessageBox.warning(self,"اسکرین‌شات","گرفتن تصویر ناموفق بود.")
         except Exception as e:QMessageBox.warning(self,"اسکرین‌شات",str(e))
@@ -521,38 +632,60 @@ class Hub(QMainWindow):
         for t in (getattr(self,"device_timer",None),getattr(self,"monitor_timer",None)):
             if t:t.stop()
         self.stop_logcat()
-        for r in (self.runner,self.snapshot_runner):
+        for r in list(self._command_runners):
             if r and r.isRunning():r.requestInterruption();r.wait(1200)
+        r=self.snapshot_runner
+        if r and r.isRunning():r.requestInterruption();r.wait(1200)
+        if getattr(self,"log_timer",None):self.log_timer.stop()
         event.accept()
 
 STYLE=f"""
 QWidget{{background:{BG};color:{TEXT};font-family:'Vazirmatn','Segoe UI';font-size:10.5pt;}}
 QMainWindow{{background:{BG};}}
-QFrame#sidebar{{background:{SURFACE};border:1px solid {BORDER};border-radius:22px;}}
-QLabel#brand{{font-size:19pt;font-weight:900;}}
-QLabel#title{{font-size:25pt;font-weight:900;}}
+QFrame#sidebar{{background:#07131d;border:1px solid #173242;border-radius:26px;}}
+QFrame#shell{{background:transparent;border:0;}}
+QFrame#topbar{{background:#0b1924;border:1px solid #1b3949;border-radius:20px;}}
+QLabel#brand{{font-size:19pt;font-weight:950;letter-spacing:1px;}}
+QLabel#brandSub{{font-size:7.5pt;color:{GREEN};font-weight:900;letter-spacing:1px;}}
+QLabel#sideMini{{font-size:7.5pt;color:{GREEN};font-weight:900;letter-spacing:1px;}}
+QLabel#kicker{{font-size:8pt;color:{GREEN};font-weight:950;letter-spacing:2px;}}
+QLabel#topTitle{{font-size:18pt;font-weight:950;}}
+QLabel#topDevice{{background:#102b39;border:1px solid #245064;border-radius:10px;padding:8px 12px;color:{GREEN};font-weight:900;}}
+QLabel#connection{{background:#0b202b;border:1px solid #183e4e;border-radius:10px;padding:8px;color:{MUTED};font-size:8.5pt;font-weight:800;}}
 QLabel#muted{{color:{MUTED};}}
-QLabel#connection{{font-weight:800;padding:7px 0;}}
-QLabel#status{{background:{SURFACE};border:1px solid {BORDER};border-radius:14px;padding:13px;}}
-QFrame#card{{background:{SURFACE};border:1px solid {BORDER};border-radius:18px;}}
-QLabel#value{{font-size:15pt;font-weight:900;}}
-QComboBox#device,QLineEdit{{background:{SURFACE2};border:1px solid {BORDER};border-radius:12px;padding:10px;color:{TEXT};}}
-QPushButton{{border:0;border-radius:12px;padding:11px 14px;background:{SURFACE2};color:{TEXT};}}
-QPushButton:hover{{background:{SURFACE3};}}
-QPushButton#nav{{text-align:right;padding:12px 14px;background:transparent;color:{MUTED};font-weight:800;}}
-QPushButton#nav:hover{{background:{SURFACE2};color:{TEXT};}}
-QPushButton#action{{background:{GREEN};color:#03130d;font-weight:900;}}
-QPushButton#tool{{min-height:58px;background:{SURFACE};border:1px solid {BORDER};font-weight:700;text-align:right;}}
-QPushButton#tool:hover{{border:1px solid {GREEN};background:{SURFACE2};}}
-QTextEdit#console{{background:#040a0f;border:1px solid {BORDER};border-radius:15px;padding:12px;color:#baf7df;font-family:Consolas,'Vazirmatn';font-size:10pt;}}
-QTableWidget{{background:{SURFACE};border:1px solid {BORDER};border-radius:14px;gridline-color:{BORDER};}}
-QHeaderView::section{{background:{SURFACE2};color:{TEXT};padding:9px;border:0;}}
+QLabel#sectionTitle{{font-size:20pt;font-weight:950;}}
+QFrame#hero{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #0d2531,stop:0.55 #0a1b27,stop:1 #111b32);border:1px solid #214556;border-radius:24px;}}
+QLabel#heroTitle{{font-size:24pt;font-weight:950;}}
+QLabel#heroSub{{color:{MUTED};font-size:10pt;}}
+QLabel#heroStatus{{background:#07151e;border:1px solid #214556;border-radius:16px;padding:14px 18px;color:{GREEN};font-weight:900;}}
+QFrame#section{{background:#091722;border:1px solid #183646;border-radius:20px;}}
+QLabel#sectionLabel{{font-size:11pt;font-weight:950;}}
+QLabel#pill{{background:#0d2b26;color:{GREEN};border:1px solid #1e5d4b;border-radius:9px;padding:4px 9px;font-size:8pt;font-weight:900;}}
+QFrame#sideFoot{{background:#091c26;border:1px solid #173746;border-radius:15px;}}
+QPushButton{{border:1px solid transparent;border-radius:12px;padding:10px 13px;background:#102330;color:{TEXT};font-weight:700;}}
+QPushButton:hover{{background:#163243;border-color:#285466;}}
+QPushButton#nav{{text-align:right;padding:11px 12px;background:transparent;border:1px solid transparent;color:{MUTED};font-weight:850;}}
+QPushButton#nav:hover{{background:#0e2532;color:{TEXT};}}
+QPushButton#nav[active="true"]{{background:#103229;border-color:#1d5949;color:{GREEN};}}
+QPushButton#quick{{background:{GREEN};color:#03130d;font-weight:950;border:0;}}
+QPushButton#quick:hover{{background:#63f0bd;}}
+QPushButton#tool{{min-height:52px;background:#0b1b26;border:1px solid #183747;font-weight:750;text-align:right;}}
+QPushButton#tool:hover{{background:#102936;border-color:#2b6073;}}
+QComboBox#device,QLineEdit{{background:#0b202c;border:1px solid #1b3e4f;border-radius:12px;padding:10px;color:{TEXT};selection-background-color:#1b594b;}}
+QComboBox#device::drop-down{{border:0;width:28px;}}
+QTextEdit#console{{background:#03090e;border:1px solid #173544;border-radius:16px;padding:13px;color:#baf7df;font-family:Consolas,'Cascadia Mono','Vazirmatn';font-size:9.5pt;}}
+QTableWidget{{background:#07151f;border:1px solid #173747;border-radius:16px;gridline-color:#12303e;alternate-background-color:#0a1b26;}}
+QTableWidget::item{{padding:8px;border-bottom:1px solid #102b38;}}
+QTableWidget::item:selected{{background:#103d34;color:{TEXT};}}
+QHeaderView::section{{background:#0d222e;color:{MUTED};padding:10px;border:0;font-size:8.5pt;font-weight:900;}}
 QScrollArea{{border:0;background:transparent;}}
-QProgressBar{{background:{SURFACE};border:1px solid {BORDER};border-radius:9px;height:18px;}}
+QScrollBar:vertical{{background:#07131c;width:10px;margin:4px;border-radius:5px;}}
+QScrollBar::handle:vertical{{background:#23404e;min-height:30px;border-radius:5px;}}
+QSpinBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding:8px;color:{TEXT};}}
+QComboBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding:8px;color:{TEXT};}}
+QProgressBar{{background:#091722;border:1px solid #173747;border-radius:9px;height:18px;}}
 QProgressBar::chunk{{background:{GREEN};border-radius:8px;}}
-"""
-
-if __name__=="__main__":
+"""\n\nif __name__=="__main__":
     app=QApplication(sys.argv)
     fp=resource_path("fonts/Vazirmatn-Regular.ttf")
     if os.path.exists(fp):
