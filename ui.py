@@ -54,67 +54,66 @@ class Hub(QMainWindow):
 
     def build(self):
         root=QWidget(); root.setObjectName("appRoot"); self.setCentralWidget(root)
-        main=QHBoxLayout(root); main.setContentsMargins(18,18,18,18); main.setSpacing(16)
+        outer=QVBoxLayout(root); outer.setContentsMargins(14,14,14,14); outer.setSpacing(12)
 
-        # ── Galaxy sidebar ────────────────────────────────────────────────
-        side=QFrame(); side.setObjectName("sidebar"); side.setFixedWidth(246)
-        sl=QVBoxLayout(side); sl.setContentsMargins(16,18,16,16); sl.setSpacing(8)
+        # Global command bar — compact, keyboard-friendly, information-first.
+        top=QFrame(); top.setObjectName("commandBar")
+        tb=QHBoxLayout(top); tb.setContentsMargins(14,10,14,10); tb.setSpacing(10)
 
-        top=QHBoxLayout(); top.setSpacing(10)
-        logo=QSvgWidget(resource_path("assets/sepehradb.svg")); logo.setFixedSize(46,46); top.addWidget(logo)
-        bt=QVBoxLayout(); bt.setSpacing(0)
-        brand=QLabel("SEPEHR"); brand.setObjectName("brand")
-        hub=QLabel("ADB HUB  /  CONTROL"); hub.setObjectName("brandSub")
-        bt.addWidget(brand); bt.addWidget(hub); top.addLayout(bt,1); sl.addLayout(top)
-        sl.addSpacing(10)
+        brandBox=QHBoxLayout(); brandBox.setSpacing(9)
+        logo=QSvgWidget(resource_path("assets/sepehradb.svg")); logo.setFixedSize(38,38); brandBox.addWidget(logo)
+        brand=QLabel("SEPEHR ADB HUB"); brand.setObjectName("appBrand"); brandBox.addWidget(brand)
+        version=QLabel(f"v{APP_VERSION}"); version.setObjectName("versionPill"); brandBox.addWidget(version)
+        tb.addLayout(brandBox); tb.addSpacing(14)
 
-        self.device_box=QComboBox(); self.device_box.setObjectName("device")
-        self.device_box.currentIndexChanged.connect(self.device_changed); sl.addWidget(self.device_box)
-        self.conn=QLabel("●  بررسی اتصال…"); self.conn.setObjectName("connection"); sl.addWidget(self.conn)
-        sl.addSpacing(8)
+        self.page_kicker=QLabel("CONTROL CENTER"); self.page_kicker.setObjectName("eyebrow"); tb.addWidget(self.page_kicker)
+        tb.addStretch()
 
+        self.device_box=QComboBox(); self.device_box.setObjectName("devicePicker"); self.device_box.setMinimumWidth(260)
+        self.device_box.setToolTip("دستگاه ADB فعال"); self.device_box.currentIndexChanged.connect(self.device_changed); tb.addWidget(self.device_box)
+        self.conn=QLabel("● OFFLINE"); self.conn.setObjectName("statusPill"); tb.addWidget(self.conn)
+        refresh=QPushButton("↻"); refresh.setObjectName("iconButton"); refresh.setToolTip("Refresh devices"); refresh.clicked.connect(self.refresh_devices); tb.addWidget(refresh)
+        outer.addWidget(top)
+
+        body=QHBoxLayout(); body.setSpacing(12)
+        rail=QFrame(); rail.setObjectName("rail"); rail.setFixedWidth(218)
+        rl=QVBoxLayout(rail); rl.setContentsMargins(10,12,10,12); rl.setSpacing(5)
+
+        navTitle=QLabel("WORKSPACE"); navTitle.setObjectName("railTitle"); rl.addWidget(navTitle)
         navs=[
-            ("OVERVIEW","⌂","داشبورد","Dashboard"),
-            ("DEVICE","◉","دستگاه","Device"),
-            ("MONITOR","◌","مانیتور","Monitor"),
-            ("APPS","▦","برنامه‌ها","Apps"),
-            ("FILES","▤","فایل‌ها","Files"),
-            ("NETWORK","⌁","شبکه","Network"),
-            ("CONTROL","⌘","کنترل","Control"),
-            ("PERFORMANCE","ϟ","عملکرد","Performance"),
-            ("LOGS","☷","لاگ‌کَت","Logcat"),
-            ("TOOLS","⚙","ابزارها","Tools"),
-            ("CONSOLE","▣","کنسول","Console")
+            ("⌂","Overview","Dashboard"),("◉","Device","Device"),("◌","Monitor","Monitor"),
+            ("▦","Apps","Apps"),("▤","Files","Files"),("⌁","Network","Network"),
+            ("⌘","Control","Control"),("ϟ","Performance","Performance"),
+            ("☷","Logcat","Logcat"),("⚙","Tools","Tools"),("▣","Console","Console")
         ]
-        self.nav_buttons=[]; self.nav_groups=[]
-        for group,icon,label,key in navs:
-            b=QPushButton(); b.setObjectName("nav")
-            b.setText(f"  {icon}    {label}")
-            b.setToolTip(f"{group}  •  {label}")
-            b.clicked.connect(lambda _,k=key:self.show_page(k))
-            self.nav_buttons.append((key,b)); sl.addWidget(b)
+        self.nav_buttons=[]
+        for icon,label,key in navs:
+            b=QPushButton(f"{icon}   {label}"); b.setObjectName("nav")
+            b.setToolTip(label); b.clicked.connect(lambda _,k=key:self.show_page(k))
+            self.nav_buttons.append((key,b)); rl.addWidget(b)
+        rl.addStretch()
 
-        sl.addStretch()
-        foot=QFrame(); foot.setObjectName("sideFoot"); fl=QVBoxLayout(foot); fl.setContentsMargins(12,10,12,10)
-        fl.addWidget(QLabel("ANDROID TOOLKIT",objectName="sideMini"))
-        v=QLabel(f"Windows  •  v{APP_VERSION}"); v.setObjectName("muted"); fl.addWidget(v)
-        sl.addWidget(foot)
-        main.addWidget(side)
+        info=QFrame(); info.setObjectName("railInfo"); il=QVBoxLayout(info); il.setContentsMargins(11,10,11,10); il.setSpacing(3)
+        a=QLabel("ADB STATUS"); a.setObjectName("railTitle"); il.addWidget(a)
+        self.railDevice=QLabel("No device"); self.railDevice.setObjectName("railValue"); il.addWidget(self.railDevice)
+        il.addWidget(QLabel("Windows • Android toolkit",objectName="muted"))
+        rl.addWidget(info)
+        body.addWidget(rail)
 
-        # ── Main shell ────────────────────────────────────────────────────
-        shell=QFrame(); shell.setObjectName("shell")
-        sh=QVBoxLayout(shell); sh.setContentsMargins(20,18,20,20); sh.setSpacing(14)
-        bar=QFrame(); bar.setObjectName("topbar"); bl=QHBoxLayout(bar); bl.setContentsMargins(16,12,16,12)
-        self.page_kicker=QLabel("OVERVIEW"); self.page_kicker.setObjectName("kicker")
-        self.page_title=QLabel("داشبورد"); self.page_title.setObjectName("topTitle")
-        titleBox=QVBoxLayout(); titleBox.setSpacing(0); titleBox.addWidget(self.page_kicker); titleBox.addWidget(self.page_title)
-        bl.addLayout(titleBox); bl.addStretch()
-        self.top_device=QLabel("NO DEVICE"); self.top_device.setObjectName("topDevice"); bl.addWidget(self.top_device)
-        sh.addWidget(bar)
+        content=QFrame(); content.setObjectName("contentSurface")
+        cl=QVBoxLayout(content); cl.setContentsMargins(20,18,20,20); cl.setSpacing(14)
+        pageTop=QHBoxLayout(); pageTop.setSpacing(10)
+        titleCol=QVBoxLayout(); titleCol.setSpacing(1)
+        self.page_title=QLabel("Overview"); self.page_title.setObjectName("pageTitle")
+        self.page_desc=QLabel("Device operations, diagnostics and automation"); self.page_desc.setObjectName("pageDesc")
+        titleCol.addWidget(self.page_title); titleCol.addWidget(self.page_desc); pageTop.addLayout(titleCol); pageTop.addStretch()
+        self.top_device=QLabel("NO DEVICE"); self.top_device.setObjectName("deviceChip"); pageTop.addWidget(self.top_device)
+        cl.addLayout(pageTop)
 
         self.nav=QStackedWidget(); self.pages={}
-        sh.addWidget(self.nav,1)
-        main.addWidget(shell,1)
+        cl.addWidget(self.nav,1)
+        body.addWidget(content,1)
+        outer.addLayout(body,1)
 
         self.add_page("Dashboard",self.dashboard_page()); self.add_page("Device",self.device_page())
         self.add_page("Monitor",self.monitor_page()); self.add_page("Apps",self.apps_page())
@@ -124,6 +123,7 @@ class Hub(QMainWindow):
         self.show_page("Dashboard")
 
     def add_page(self,key,w):
+
         self.pages[key]=w; self.nav.addWidget(w)
 
     def show_page(self,key):
@@ -325,6 +325,8 @@ class Hub(QMainWindow):
         elif devices:self.serial=devices[0]; self.device_box.setCurrentText(self.serial)
         else:self.serial=""
         self.top_device.setText(self.serial if self.serial else "NO DEVICE")
+        if hasattr(self,"railDevice"): self.railDevice.setText(self.serial if self.serial else "No device")
+        if hasattr(self,"railDevice"): self.railDevice.setText(self.serial if self.serial else "No device")
         self.device_box.blockSignals(False)
         if not devices:
             self.conn.setText("●  هیچ دستگاهی متصل نیست"); self.conn.setStyleSheet(f"color:{RED};")
@@ -571,104 +573,57 @@ class Hub(QMainWindow):
         event.accept()
 
 STYLE=f"""
-QWidget{{background:{BG};color:{TEXT};font-family:'Vazirmatn','Segoe UI';font-size:10.5pt;}}
+QWidget{{background:{BG};color:{TEXT};font-family:'Vazirmatn','Segoe UI';font-size:10pt;}}
 QMainWindow{{background:{BG};}}
-QFrame#sidebar{{background:#07131d;border:1px solid #173242;border-radius:26px;}}
-QFrame#shell{{background:transparent;border:0;}}
-QFrame#topbar{{background:#0b1924;border:1px solid #1b3949;border-radius:20px;}}
-QLabel#brand{{font-size:19pt;font-weight:950;letter-spacing:1px;}}
-QLabel#brandSub{{font-size:7.5pt;color:{GREEN};font-weight:900;letter-spacing:1px;}}
-QLabel#sideMini{{font-size:7.5pt;color:{GREEN};font-weight:900;letter-spacing:1px;}}
-QLabel#kicker{{font-size:8pt;color:{GREEN};font-weight:950;letter-spacing:2px;}}
-QLabel#topTitle{{font-size:18pt;font-weight:950;}}
-QLabel#topDevice{{background:#102b39;border:1px solid #245064;border-radius:10px;padding:8px 12px;color:{GREEN};font-weight:900;}}
-QLabel#connection{{background:#0b202b;border:1px solid #183e4e;border-radius:10px;padding:8px;color:{MUTED};font-size:8.5pt;font-weight:800;}}
+QFrame#commandBar{{background:#0b151d;border:1px solid #20333e;border-radius:16px;}}
+QLabel#appBrand{{font-size:12.5pt;font-weight:950;letter-spacing:.4px;}}
+QLabel#versionPill,QLabel#statusPill{{background:#10222d;border:1px solid #274250;border-radius:9px;padding:5px 9px;color:{MUTED};font-size:8pt;font-weight:850;}}
+QLabel#eyebrow,QLabel#railTitle{{color:{GREEN};font-size:7.5pt;font-weight:950;letter-spacing:1.5px;}}
+QFrame#rail{{background:#09131b;border:1px solid #1b2d37;border-radius:18px;}}
+QPushButton#nav{{background:transparent;border:1px solid transparent;border-radius:10px;padding:10px 11px;color:#9aadb7;text-align:right;font-weight:750;}}
+QPushButton#nav:hover{{background:#10212b;color:{TEXT};}}
+QPushButton#nav[active="true"]{{background:#10382e;border-color:#1b5a49;color:{GREEN};}}
+QFrame#railInfo{{background:#0c1b23;border:1px solid #1a343f;border-radius:13px;}}
+QLabel#railValue{{font-weight:900;color:{TEXT};}}
+QFrame#contentSurface{{background:#071118;border:1px solid #192d37;border-radius:18px;}}
+QLabel#pageTitle{{font-size:21pt;font-weight:950;letter-spacing:-.3px;}}
+QLabel#pageDesc{{color:{MUTED};font-size:9pt;}}
+QLabel#deviceChip{{background:#0e2520;border:1px solid #225846;border-radius:10px;padding:8px 12px;color:{GREEN};font-weight:900;}}
+QComboBox#devicePicker,QLineEdit{{background:#0a1b24;border:1px solid #203d49;border-radius:10px;padding:9px 11px;color:{TEXT};}}
+QComboBox#devicePicker:focus,QLineEdit:focus{{border-color:{GREEN};}}
+QPushButton#iconButton{{min-width:38px;max-width:38px;min-height:38px;max-height:38px;padding:0;border-radius:10px;background:#10232d;border:1px solid #28434f;font-size:14pt;}}
+QPushButton#iconButton:hover{{background:#16313d;border-color:#3b6271;}}
 QLabel#muted{{color:{MUTED};}}
-QLabel#sectionTitle{{font-size:20pt;font-weight:950;}}
-QFrame#hero{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #0d2531,stop:0.55 #0a1b27,stop:1 #111b32);border:1px solid #214556;border-radius:24px;}}
-QLabel#heroTitle{{font-size:24pt;font-weight:950;}}
-QLabel#heroSub{{color:{MUTED};font-size:10pt;}}
-QLabel#heroStatus{{background:#07151e;border:1px solid #214556;border-radius:16px;padding:14px 18px;color:{GREEN};font-weight:900;}}
-QFrame#section{{background:#091722;border:1px solid #183646;border-radius:20px;}}
-QLabel#sectionLabel{{font-size:11pt;font-weight:950;}}
-QLabel#pill{{background:#0d2b26;color:{GREEN};border:1px solid #1e5d4b;border-radius:9px;padding:4px 9px;font-size:8pt;font-weight:900;}}
-QFrame#sideFoot{{background:#091c26;border:1px solid #173746;border-radius:15px;}}
-QPushButton{{border:1px solid transparent;border-radius:12px;padding:10px 13px;background:#102330;color:{TEXT};font-weight:700;}}
-QPushButton:hover{{background:#163243;border-color:#285466;}}
-QPushButton#nav{{text-align:right;padding:11px 12px;background:transparent;border:1px solid transparent;color:{MUTED};font-weight:850;}}
-QPushButton#nav:hover{{background:#0e2532;color:{TEXT};}}
-QPushButton#nav[active="true"]{{background:#103229;border-color:#1d5949;color:{GREEN};}}
-QPushButton#quick{{background:{GREEN};color:#03130d;font-weight:950;border:0;}}
-QPushButton#quick:hover{{background:#63f0bd;}}
-QPushButton#tool{{min-height:52px;background:#0b1b26;border:1px solid #183747;font-weight:750;text-align:right;}}
-QPushButton#tool:hover{{background:#102936;border-color:#2b6073;}}
-QComboBox#device,QLineEdit{{background:#0b202c;border:1px solid #1b3e4f;border-radius:12px;padding:10px;color:{TEXT};selection-background-color:#1b594b;}}
-QComboBox#device::drop-down{{border:0;width:28px;}}
-QTextEdit#console{{background:#03090e;border:1px solid #173544;border-radius:16px;padding:13px;color:#baf7df;font-family:Consolas,'Cascadia Mono','Vazirmatn';font-size:9.5pt;}}
-QTableWidget{{background:#07151f;border:1px solid #173747;border-radius:16px;gridline-color:#12303e;alternate-background-color:#0a1b26;}}
-QTableWidget::item{{padding:8px;border-bottom:1px solid #102b38;}}
-QTableWidget::item:selected{{background:#103d34;color:{TEXT};}}
-QHeaderView::section{{background:#0d222e;color:{MUTED};padding:10px;border:0;font-size:8.5pt;font-weight:900;}}
+QFrame#hero{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #0d2823,stop:.55 #0b1b25,stop:1 #121b2a);border:1px solid #21463e;border-radius:18px;}}
+QLabel#heroTitle{{font-size:22pt;font-weight:950;}}
+QLabel#heroSub{{color:#9bb1ba;font-size:9.5pt;}}
+QLabel#heroStatus{{background:#07151a;border:1px solid #245043;border-radius:12px;padding:11px 14px;color:{GREEN};font-weight:900;}}
+QFrame#section{{background:#091720;border:1px solid #1a303b;border-radius:15px;}}
+QLabel#sectionLabel{{font-size:10.5pt;font-weight:900;}}
+QLabel#pill{{background:#0d2822;color:{GREEN};border:1px solid #245444;border-radius:8px;padding:4px 8px;font-size:7.5pt;font-weight:900;}}
+QFrame#card{{background:#0b1a23;border:1px solid #1b303a;border-radius:14px;}}
+QLabel#value{{font-size:15pt;font-weight:950;}}
+QPushButton{{background:#0e202a;border:1px solid #1c3743;border-radius:10px;padding:9px 12px;color:{TEXT};font-weight:700;}}
+QPushButton:hover{{background:#142b36;border-color:#315664;}}
+QPushButton:pressed{{background:#0b1b23;}}
+QPushButton#quick{{background:{GREEN};color:#04130d;border:0;font-weight:950;}}
+QPushButton#quick:hover{{background:#62efba;}}
+QPushButton#tool{{min-height:48px;background:#0b1b24;border:1px solid #1a3440;font-weight:750;text-align:right;}}
+QPushButton#tool:hover{{background:#102a35;border-color:#315867;}}
+QTextEdit#console{{background:#040a0e;border:1px solid #18313c;border-radius:13px;padding:12px;color:#b9f6dc;font-family:Consolas,'Cascadia Mono';font-size:9pt;}}
+QTableWidget{{background:#07131a;border:1px solid #18313c;border-radius:13px;gridline-color:#112b35;alternate-background-color:#0a1921;}}
+QTableWidget::item{{padding:7px;border-bottom:1px solid #102832;}}
+QTableWidget::item:selected{{background:#123d33;color:{TEXT};}}
+QHeaderView::section{{background:#0c202a;color:{MUTED};padding:9px;border:0;font-size:8pt;font-weight:900;}}
 QScrollArea{{border:0;background:transparent;}}
-QScrollBar:vertical{{background:#07131c;width:10px;margin:4px;border-radius:5px;}}
-QScrollBar::handle:vertical{{background:#23404e;min-height:30px;border-radius:5px;}}
-QSpinBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding:8px;color:{TEXT};}}
-QComboBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding:8px;color:{TEXT};}}
-QProgressBar{{background:#091722;border:1px solid #173747;border-radius:9px;height:18px;}}
-QProgressBar::chunk{{background:{GREEN};border-radius:8px;}}
-"""
-
-STYLE=f"""
-QWidget{{background:{BG};color:{TEXT};font-family:'Vazirmatn','Segoe UI';font-size:10.5pt;}}
-QMainWindow{{background:{BG};}}
-QFrame#sidebar{{background:#07131d;border:1px solid #173242;border-radius:26px;}}
-QFrame#shell{{background:transparent;border:0;}}
-QFrame#topbar{{background:#0b1924;border:1px solid #1b3949;border-radius:20px;}}
-QLabel#brand{{font-size:19pt;font-weight:950;letter-spacing:1px;}}
-QLabel#brandSub{{font-size:7.5pt;color:{GREEN};font-weight:900;letter-spacing:1px;}}
-QLabel#sideMini{{font-size:7.5pt;color:{GREEN};font-weight:900;letter-spacing:1px;}}
-QLabel#kicker{{font-size:8pt;color:{GREEN};font-weight:950;letter-spacing:2px;}}
-QLabel#topTitle{{font-size:18pt;font-weight:950;}}
-QLabel#topDevice{{background:#102b39;border:1px solid #245064;border-radius:10px;padding:8px 12px;color:{GREEN};font-weight:900;}}
-QLabel#connection{{background:#0b202b;border:1px solid #183e4e;border-radius:10px;padding:8px;color:{MUTED};font-size:8.5pt;font-weight:800;}}
-QLabel#muted{{color:{MUTED};}}
-QLabel#sectionTitle{{font-size:20pt;font-weight:950;}}
-QFrame#hero{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #0d2531,stop:0.55 #0a1b27,stop:1 #111b32);border:1px solid #214556;border-radius:24px;}}
-QLabel#heroTitle{{font-size:24pt;font-weight:950;}}
-QLabel#heroSub{{color:{MUTED};font-size:10pt;}}
-QLabel#heroStatus{{background:#07151e;border:1px solid #214556;border-radius:16px;padding:14px 18px;color:{GREEN};font-weight:900;}}
-QFrame#section{{background:#091722;border:1px solid #183646;border-radius:20px;}}
-QLabel#sectionLabel{{font-size:11pt;font-weight:950;}}
-QLabel#pill{{background:#0d2b26;color:{GREEN};border:1px solid #1e5d4b;border-radius:9px;padding:4px 9px;font-size:8pt;font-weight:900;}}
-QFrame#sideFoot{{background:#091c26;border:1px solid #173746;border-radius:15px;}}
-QPushButton{{border:1px solid transparent;border-radius:12px;padding:10px 13px;background:#102330;color:{TEXT};font-weight:700;}}
-QPushButton:hover{{background:#163243;border-color:#285466;}}
-QPushButton#nav{{text-align:right;padding:11px 12px;background:transparent;border:1px solid transparent;color:{MUTED};font-weight:850;}}
-QPushButton#nav:hover{{background:#0e2532;color:{TEXT};}}
-QPushButton#nav[active="true"]{{background:#103229;border-color:#1d5949;color:{GREEN};}}
-QPushButton#quick{{background:{GREEN};color:#03130d;font-weight:950;border:0;}}
-QPushButton#quick:hover{{background:#63f0bd;}}
-QPushButton#tool{{min-height:52px;background:#0b1b26;border:1px solid #183747;font-weight:750;text-align:right;}}
-QPushButton#tool:hover{{background:#102936;border-color:#2b6073;}}
-QComboBox#device,QLineEdit{{background:#0b202c;border:1px solid #1b3e4f;border-radius:12px;padding:10px;color:{TEXT};selection-background-color:#1b594b;}}
-QComboBox#device::drop-down{{border:0;width:28px;}}
-QTextEdit#console{{background:#03090e;border:1px solid #173544;border-radius:16px;padding:13px;color:#baf7df;font-family:Consolas,'Cascadia Mono','Vazirmatn';font-size:9.5pt;}}
-QTableWidget{{background:#07151f;border:1px solid #173747;border-radius:16px;gridline-color:#12303e;alternate-background-color:#0a1b26;}}
-QTableWidget::item{{padding:8px;border-bottom:1px solid #102b38;}}
-QTableWidget::item:selected{{background:#103d34;color:{TEXT};}}
-QHeaderView::section{{background:#0d222e;color:{MUTED};padding:10px;border:0;font-size:8.5pt;font-weight:900;}}
-QScrollArea{{border:0;background:transparent;}}
-QScrollBar:vertical{{background:#07131c;width:10px;margin:4px;border-radius:5px;}}
-QScrollBar::handle:vertical{{background:#23404e;min-height:30px;border-radius:5px;}}
-QSpinBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding:8px;color:{TEXT};}}
-QComboBox{{background:#0b202c;border:1px solid #1b3e4f;border-radius:10px;padding:8px;color:{TEXT};}}
-QProgressBar{{background:#091722;border:1px solid #173747;border-radius:9px;height:18px;}}
-QProgressBar::chunk{{background:{GREEN};border-radius:8px;}}
-"""
-
-
-
-if __name__=="__main__":
+QScrollBar:vertical{{background:#071119;width:9px;margin:2px;border-radius:4px;}}
+QScrollBar::handle:vertical{{background:#24404b;min-height:28px;border-radius:4px;}}
+QSpinBox,QComboBox{{background:#0a1b24;border:1px solid #203d49;border-radius:9px;padding:8px;color:{TEXT};}}
+QProgressBar{{background:#091820;border:1px solid #18333e;border-radius:8px;height:16px;}}
+QProgressBar::chunk{{background:{GREEN};border-radius:7px;}}
+QLineEdit::placeholder{{color:#607985;}}
+QPushButton:focus,QComboBox:focus,QLineEdit:focus,QTableWidget:focus{{outline:none;border-color:{GREEN};}}
+"""\n\nif __name__=="__main__":
     app=QApplication(sys.argv)
     fp=resource_path("fonts/Vazirmatn-Regular.ttf")
     if os.path.exists(fp):
